@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ArchiveNet</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 <link href="style.css" rel="stylesheet">
 <script>
 (function () {
@@ -21,74 +22,88 @@
   <span class="bg-blob bg-blob-1"></span>
   <span class="bg-blob bg-blob-2"></span>
   <span class="bg-blob bg-blob-3"></span>
+  <span class="bg-blob bg-blob-4"></span>
 </div>
 
 <header class="app-bar">
   <div class="app-bar-inner">
     <div class="brand">
-      <span class="brand-mark">📦</span>
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="26" height="26">
+          <path fill="#4285F4" d="M12 2c.7 0 1.3.5 1.4 1.2L13.5 11H12V2z"/>
+          <path fill="#EA4335" d="M22 12c0 .7-.5 1.3-1.2 1.4L13 13.5V12h9z"/>
+          <path fill="#FBBC04" d="M12 22c-.7 0-1.3-.5-1.4-1.2L10.5 13H12v9z"/>
+          <path fill="#34A853" d="M2 12c0-.7.5-1.3 1.2-1.4L11 10.5V12H2z"/>
+        </svg>
+      </span>
       <span class="brand-name">ArchiveNet</span>
     </div>
 
     <div class="search-shell">
-      <span class="search-icon" aria-hidden="true">🔍</span>
-      <input id="search-input" type="text" placeholder="Search archived links…" autocomplete="off">
+      <span class="search-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14"/>
+        </svg>
+      </span>
+      <input id="search-input" type="text" placeholder="Search your archive" autocomplete="off" aria-label="Search archived links">
+      <button id="search-clear" class="search-clear" type="button" aria-label="Clear search" hidden>✕</button>
       <div id="search-results" class="search-dropdown"></div>
     </div>
 
     <div class="app-bar-actions">
-      <button id="snapshots-btn" type="button" class="btn-text">
-        <span aria-hidden="true">🗂️</span> Snapshots
+      <button id="theme-toggle" type="button" class="icon-pill" aria-label="Toggle dark mode">
+        <span class="theme-icon" aria-hidden="true">🌙</span>
       </button>
-      <button id="export-btn" type="button" class="btn-text">
-        <span aria-hidden="true">⬇️</span> Export
+      <button id="export-btn" type="button" class="icon-pill" aria-label="Export archive" data-tip="Export">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M5 20h14v-2H5zM19 9h-4V3H9v6H5l7 7z"/></svg>
       </button>
-      <button id="import-btn" type="button" class="btn-text">
-        <span aria-hidden="true">⬆️</span> Import
+      <button id="import-btn" type="button" class="icon-pill" aria-label="Import archive" data-tip="Import">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M5 20h14v-2H5zm0-10h4v6h6v-6h4l-7-7z"/></svg>
       </button>
       <input id="import-file" type="file" accept=".zip" hidden>
-      <button id="theme-toggle" type="button" class="btn-text btn-icon-only" aria-label="Toggle dark mode">
-        <span aria-hidden="true">🌙</span>
+      <button id="snapshots-btn" type="button" class="btn-tonal">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M22 16V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2m-11-4 2.03 2.71L16 11l4 5H8zM2 6v14a2 2 0 0 0 2 2h14v-2H4V6z"/></svg>
+        Library
       </button>
     </div>
   </div>
+  <div id="app-progress" class="app-progress" hidden><span></span></div>
 </header>
 
 <main class="page">
-  <section class="hero-card fade-in">
+  <section class="hero reveal">
     <h1 class="hero-title">Save it before it's gone.</h1>
     <p class="hero-subtitle">Archive any page as HTML and PDF in one click.</p>
 
-    <form id="archive-form" class="archive-form">
-      <input
-        id="url-input"
-        type="text"
-        placeholder="Paste a URL to archive"
-        autocomplete="off"
-        required
-      >
-      <button id="archive-btn" type="submit">Archive</button>
+    <form id="archive-form" class="archive-bar">
+      <span class="archive-bar-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3.9 12a3.1 3.1 0 0 1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7A3.1 3.1 0 0 1 3.9 12M8 13h8v-2H8zm9-6h-4v1.9h4a3.1 3.1 0 0 1 0 6.2h-4V17h4a5 5 0 0 0 0-10"/></svg>
+      </span>
+      <input id="url-input" type="text" placeholder="Paste a link to archive" autocomplete="off" required>
+      <button id="archive-btn" type="submit" class="btn-filled">
+        <span class="btn-label">Archive</span>
+        <span class="btn-spinner" aria-hidden="true"></span>
+      </button>
     </form>
 
     <label class="recursive-toggle">
       <input type="checkbox" id="recursive-checkbox">
-      <span>Recursive — archive every page on this site, not just the ones linked from this URL</span>
+      <span class="switch" aria-hidden="true"></span>
+      <span class="recursive-label">Archive the entire site, not just this page</span>
     </label>
-    <p id="recursive-warning" class="recursive-warning" hidden>
-      ⚠️ This crawls the entire site (up to 100 pages) instead of just 15 linked pages, so the archive will be significantly larger and take much longer to finish.
-    </p>
+    <div id="recursive-warning" class="recursive-warning" hidden>
+      <span aria-hidden="true">⚠️</span>
+      <span>Crawls up to 100 pages instead of 15. The archive will be much larger and take considerably longer.</span>
+    </div>
   </section>
 
-  <section id="recent-gallery" class="recent-gallery fade-in" hidden>
-    <h2 class="recent-gallery-title">Recently archived</h2>
-    <div id="recent-gallery-grid" class="recent-gallery-grid"></div>
-  </section>
+  <section id="timeline" class="timeline" aria-live="polite"></section>
 </main>
 
 <footer class="version-tag">v0.1a</footer>
 
 <div id="toast" class="snackbar" role="status" aria-live="polite">
-  <span id="toast-icon" aria-hidden="true">✅</span>
+  <span id="toast-icon" class="snackbar-icon" aria-hidden="true">✅</span>
   <span id="toast-text">Archive completed</span>
 </div>
 
@@ -96,14 +111,38 @@
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
     <div class="dialog-header">
       <div class="dialog-title-group">
-        <button id="dialog-back" class="icon-btn" type="button" aria-label="Back" hidden>←</button>
-        <h2 id="dialog-title">Snapshots</h2>
+        <button id="dialog-back" class="icon-pill" type="button" aria-label="Back" hidden>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/></svg>
+        </button>
+        <h2 id="dialog-title">Library</h2>
       </div>
-      <button id="dialog-close" class="icon-btn" type="button" aria-label="Close">✕</button>
+      <button id="dialog-close" class="icon-pill" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
     </div>
-    <div id="dialog-body" class="dialog-body">
-      <div class="dialog-loading">Loading…</div>
+    <div id="dialog-body" class="dialog-body"></div>
+  </div>
+</div>
+
+<div id="viewer" class="viewer" hidden>
+  <div class="viewer-bar">
+    <button id="viewer-close" class="icon-pill viewer-icon" type="button" aria-label="Close viewer">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+    </button>
+    <div class="viewer-meta">
+      <div id="viewer-url" class="viewer-url"></div>
+      <div id="viewer-date" class="viewer-date"></div>
     </div>
+    <div class="viewer-actions">
+      <a id="viewer-html" class="btn-tonal" target="_blank" rel="noopener">Open HTML</a>
+      <a id="viewer-pdf" class="btn-tonal" target="_blank" rel="noopener">Open PDF</a>
+      <button id="viewer-delete" class="icon-pill viewer-icon" type="button" aria-label="Delete this snapshot">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="viewer-stage">
+    <img id="viewer-img" alt="" >
   </div>
 </div>
 

@@ -1,14 +1,20 @@
+/* ============================================================
+   Elements
+   ============================================================ */
+
 const form = document.getElementById('archive-form');
 const input = document.getElementById('url-input');
 const btn = document.getElementById('archive-btn');
 const recursiveCheckbox = document.getElementById('recursive-checkbox');
 const recursiveWarning = document.getElementById('recursive-warning');
+const appProgress = document.getElementById('app-progress');
 
 const toast = document.getElementById('toast');
 const toastIcon = document.getElementById('toast-icon');
 const toastText = document.getElementById('toast-text');
 
 const searchInput = document.getElementById('search-input');
+const searchClear = document.getElementById('search-clear');
 const searchResults = document.getElementById('search-results');
 
 const snapshotsBtn = document.getElementById('snapshots-btn');
@@ -16,21 +22,33 @@ const exportBtn = document.getElementById('export-btn');
 const importBtn = document.getElementById('import-btn');
 const importFile = document.getElementById('import-file');
 const themeToggle = document.getElementById('theme-toggle');
+
 const dialogOverlay = document.getElementById('dialog-overlay');
 const dialogTitle = document.getElementById('dialog-title');
 const dialogBack = document.getElementById('dialog-back');
 const dialogClose = document.getElementById('dialog-close');
 const dialogBody = document.getElementById('dialog-body');
 
-const recentGallery = document.getElementById('recent-gallery');
-const recentGalleryGrid = document.getElementById('recent-gallery-grid');
-const RECENT_GALLERY_LIMIT = 6;
+const timelineEl = document.getElementById('timeline');
+
+const viewer = document.getElementById('viewer');
+const viewerImg = document.getElementById('viewer-img');
+const viewerUrl = document.getElementById('viewer-url');
+const viewerDate = document.getElementById('viewer-date');
+const viewerHtml = document.getElementById('viewer-html');
+const viewerPdf = document.getElementById('viewer-pdf');
+const viewerClose = document.getElementById('viewer-close');
+const viewerDelete = document.getElementById('viewer-delete');
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+/* ============================================================
+   Helpers
+   ============================================================ */
 
 function escapeHtml(str) {
   const div = document.createElement('div');
@@ -42,12 +60,59 @@ function thumbStyle(thumbnail) {
   return thumbnail ? `background-image: url('/archived/${thumbnail}')` : '';
 }
 
-/* ---------------- dark mode ---------------- */
+function dayKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+// "Today" / "Yesterday" / "Monday, July 20" / "July 20, 2025"
+function friendlyDate(date) {
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (dayKey(date) === dayKey(today)) return 'Today';
+  if (dayKey(date) === dayKey(yesterday)) return 'Yesterday';
+
+  const opts = date.getFullYear() === today.getFullYear()
+    ? { weekday: 'long', month: 'long', day: 'numeric' }
+    : { month: 'long', day: 'numeric', year: 'numeric' };
+  return date.toLocaleDateString(undefined, opts);
+}
+
+/* Material-style ripple on any button press */
+function attachRipple(el) {
+  el.addEventListener('pointerdown', (e) => {
+    const rect = el.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height);
+    const span = document.createElement('span');
+    span.className = 'ripple';
+    span.style.width = span.style.height = `${size}px`;
+    span.style.left = `${e.clientX - rect.left - size / 2}px`;
+    span.style.top = `${e.clientY - rect.top - size / 2}px`;
+    el.appendChild(span);
+    setTimeout(() => span.remove(), 600);
+  });
+}
+
+function wireRipples(root = document) {
+  root.querySelectorAll('.btn-filled, .btn-tonal, .icon-pill').forEach((el) => {
+    if (el.dataset.rippled) return;
+    el.dataset.rippled = '1';
+    attachRipple(el);
+  });
+}
+
+wireRipples();
+
+/* ============================================================
+   Theme
+   ============================================================ */
 
 const THEME_KEY = 'archivenet-theme';
+const themeIcon = themeToggle.querySelector('.theme-icon');
 
 function syncThemeToggle(theme) {
-  themeToggle.textContent = theme === 'dark' ? '☀️' : '🌙';
+  themeIcon.textContent = theme === 'dark' ? '☀️' : '🌙';
   themeToggle.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
 }
 
@@ -57,42 +122,16 @@ themeToggle.addEventListener('click', () => {
   const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
   localStorage.setItem(THEME_KEY, next);
-  syncThemeToggle(next);
+
+  themeIcon.classList.remove('swap');
+  void themeIcon.offsetWidth; // restart the animation
+  themeIcon.classList.add('swap');
+  setTimeout(() => syncThemeToggle(next), 220);
 });
 
-/* ---------------- recent gallery ---------------- */
-
-async function loadRecentGallery() {
-  try {
-    const res = await fetch('/api/sites');
-    const sites = await res.json();
-
-    if (!res.ok || !sites.length) {
-      recentGallery.hidden = true;
-      return;
-    }
-
-    recentGalleryGrid.innerHTML = sites.slice(0, RECENT_GALLERY_LIMIT).map(renderRecentCard).join('');
-    recentGalleryGrid.querySelectorAll('[data-domain]').forEach((card) => {
-      card.addEventListener('click', () => openSiteCalendar(card.dataset.domain));
-    });
-    recentGallery.hidden = false;
-  } catch {
-    recentGallery.hidden = true;
-  }
-}
-
-function renderRecentCard(site) {
-  return `
-    <div class="recent-gallery-card" data-domain="${escapeHtml(site.domain)}">
-      <div class="recent-gallery-thumb" style="${thumbStyle(site.thumbnail)}">${site.thumbnail ? '' : '🌐'}</div>
-      <div class="recent-gallery-label">${escapeHtml(site.domain)}</div>
-    </div>`;
-}
-
-loadRecentGallery();
-
-/* ---------------- snackbar ---------------- */
+/* ============================================================
+   Snackbar
+   ============================================================ */
 
 let toastTimer;
 function showToast(message, variant = 'success') {
@@ -101,10 +140,159 @@ function showToast(message, variant = 'success') {
   toastText.textContent = message;
   toast.classList.toggle('error', variant === 'error');
   toast.classList.add('show');
-  toastTimer = setTimeout(() => toast.classList.remove('show'), 2800);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
 }
 
-/* ---------------- archive form ---------------- */
+/* ============================================================
+   Timeline — the main Google-Photos-style grid
+   ============================================================ */
+
+function skeletonGrid(n = 8) {
+  return `<div class="tl-group"><div class="tl-grid">${
+    Array.from({ length: n }, () => '<div class="skeleton"></div>').join('')
+  }</div></div>`;
+}
+
+async function loadTimeline({ skeleton = true } = {}) {
+  if (skeleton && !timelineEl.dataset.loaded) timelineEl.innerHTML = skeletonGrid();
+
+  try {
+    const res = await fetch('/api/timeline');
+    const entries = await res.json();
+    if (!res.ok) throw new Error(entries.error || 'Could not load your archive.');
+
+    timelineEl.dataset.loaded = '1';
+
+    if (!entries.length) {
+      timelineEl.innerHTML = `
+        <div class="tl-empty">
+          <div class="tl-empty-art">🗂️</div>
+          <div class="tl-empty-title">Nothing archived yet</div>
+          <div class="tl-empty-hint">Paste a link above to save your first snapshot.</div>
+        </div>`;
+      return;
+    }
+
+    // Group by calendar day, preserving the newest-first order from the API.
+    const groups = [];
+    const index = new Map();
+    for (const entry of entries) {
+      const date = new Date(entry.archivedAt);
+      const key = dayKey(date);
+      if (!index.has(key)) {
+        index.set(key, { label: friendlyDate(date), items: [] });
+        groups.push(index.get(key));
+      }
+      index.get(key).items.push(entry);
+    }
+
+    let n = 0;
+    timelineEl.innerHTML = groups.map((group) => `
+      <section class="tl-group">
+        <header class="tl-group-head">
+          <h2 class="tl-group-title">${escapeHtml(group.label)}</h2>
+          <span class="tl-group-count">${group.items.length} snapshot${group.items.length === 1 ? '' : 's'}</span>
+        </header>
+        <div class="tl-grid">${group.items.map((entry) => renderTimelineCard(entry, n++)).join('')}</div>
+      </section>
+    `).join('');
+
+    timelineEl.querySelectorAll('.tl-card').forEach((card) => {
+      const entry = entries[Number(card.dataset.index)];
+      card.addEventListener('click', () => openViewer(entry));
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openViewer(entry); }
+      });
+    });
+  } catch (err) {
+    timelineEl.innerHTML = `<div class="tl-empty"><div class="tl-empty-title">${escapeHtml(err.message)}</div></div>`;
+  }
+}
+
+function renderTimelineCard(entry, i) {
+  const time = new Date(entry.archivedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const subs = entry.sublinkCount
+    ? `<div class="tl-badge">${entry.sublinkCount} sub-link${entry.sublinkCount === 1 ? '' : 's'}</div>`
+    : '';
+  // Stagger the entrance, but cap the delay so a large archive still appears promptly.
+  const delay = Math.min(i * 35, 700);
+
+  return `
+    <div class="tl-card" data-index="${i}" tabindex="0" role="button"
+         aria-label="Open snapshot of ${escapeHtml(entry.url)}"
+         style="animation-delay:${delay}ms">
+      <div class="tl-thumb" style="${thumbStyle(entry.thumbnail)}">${entry.thumbnail ? '' : '🌐'}</div>
+      ${subs}
+      <div class="tl-veil"></div>
+      <div class="tl-info">
+        <div class="tl-domain">${escapeHtml(entry.domain)}</div>
+        <div class="tl-sub">${escapeHtml(time)}</div>
+      </div>
+    </div>`;
+}
+
+loadTimeline();
+
+/* ============================================================
+   Viewer (lightbox)
+   ============================================================ */
+
+let viewerEntry = null;
+
+function openViewer(entry) {
+  viewerEntry = entry;
+  viewerUrl.textContent = entry.url;
+  viewerDate.textContent = new Date(entry.archivedAt).toLocaleString();
+  viewerImg.src = entry.thumbnail ? `/archived/${entry.thumbnail}` : '';
+  viewerImg.alt = `Snapshot of ${entry.url}`;
+  viewerHtml.href = `/archived/${entry.dir}/page.html`;
+  viewerPdf.href = `/archived/${entry.dir}/page.pdf`;
+  viewer.hidden = false;
+  document.body.style.overflow = 'hidden';
+  viewerClose.focus();
+}
+
+function closeViewer() {
+  viewer.classList.add('closing');
+  setTimeout(() => {
+    viewer.classList.remove('closing');
+    viewer.hidden = true;
+    viewerImg.src = '';
+    viewerEntry = null;
+    document.body.style.overflow = '';
+  }, 200);
+}
+
+viewerClose.addEventListener('click', closeViewer);
+viewer.addEventListener('click', (e) => {
+  if (e.target === viewer || e.target.classList.contains('viewer-stage')) closeViewer();
+});
+
+viewerDelete.addEventListener('click', async () => {
+  if (!viewerEntry) return;
+  const label = new Date(viewerEntry.archivedAt).toLocaleString();
+  if (!confirm(`Delete this snapshot of ${viewerEntry.url} from ${label}? This cannot be undone.`)) return;
+
+  try {
+    const res = await fetch('/api/archives/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dirs: [viewerEntry.dir] })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || 'Delete failed', 'error'); return; }
+
+    showToast('Snapshot deleted');
+    closeViewer();
+    loadTimeline({ skeleton: false });
+  } catch (err) {
+    showToast(err.message || 'Delete failed', 'error');
+  }
+});
+
+/* ============================================================
+   Archive form
+   ============================================================ */
 
 recursiveCheckbox.addEventListener('change', () => {
   recursiveWarning.hidden = !recursiveCheckbox.checked;
@@ -118,7 +306,8 @@ form.addEventListener('submit', async (e) => {
   const recursive = recursiveCheckbox.checked;
 
   btn.disabled = true;
-  btn.textContent = recursive ? 'Archiving site…' : 'Archiving…';
+  btn.classList.add('loading');
+  appProgress.hidden = false;
 
   try {
     const res = await fetch('/api/archive', {
@@ -134,33 +323,42 @@ form.addEventListener('submit', async (e) => {
     }
 
     const savedSublinks = data.sublinks.filter((s) => !s.error).length;
-    const capNote = data.truncated ? ' (site had more — stopped at the page limit)' : '';
+    const capNote = data.truncated ? ' — stopped at the page limit' : '';
     showToast(
       savedSublinks
-        ? `Archive completed — ${savedSublinks} sub-link${savedSublinks === 1 ? '' : 's'} saved${capNote}`
+        ? `Archived — ${savedSublinks} sub-link${savedSublinks === 1 ? '' : 's'} saved${capNote}`
         : 'Archive completed'
     );
     input.value = '';
-    loadRecentGallery();
+    loadTimeline({ skeleton: false });
   } catch (err) {
     showToast(err.message || 'Archive failed', 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Archive';
+    btn.classList.remove('loading');
+    appProgress.hidden = true;
   }
 });
 
-/* ---------------- search ---------------- */
+/* ============================================================
+   Search
+   ============================================================ */
 
 let searchTimer;
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
   const q = searchInput.value.trim();
-  if (!q) {
-    searchResults.classList.remove('show');
-    return;
-  }
-  searchTimer = setTimeout(() => runSearch(q), 250);
+  searchClear.hidden = !q;
+
+  if (!q) { searchResults.classList.remove('show'); return; }
+  searchTimer = setTimeout(() => runSearch(q), 220);
+});
+
+searchClear.addEventListener('click', () => {
+  searchInput.value = '';
+  searchClear.hidden = true;
+  searchResults.classList.remove('show');
+  searchInput.focus();
 });
 
 document.addEventListener('click', (e) => {
@@ -172,8 +370,7 @@ document.addEventListener('click', (e) => {
 async function runSearch(q) {
   try {
     const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-    const data = await res.json();
-    renderSearchResults(data);
+    renderSearchResults(await res.json());
   } catch {
     searchResults.innerHTML = '<div class="search-empty">Search failed.</div>';
     searchResults.classList.add('show');
@@ -213,22 +410,33 @@ function renderSearchResults(results) {
   searchResults.classList.add('show');
 }
 
-/* ---------------- dialog shell ---------------- */
+/* ============================================================
+   Dialog shell
+   ============================================================ */
 
 function openDialog() {
   dialogOverlay.hidden = false;
+  document.body.style.overflow = 'hidden';
 }
 
 function closeDialog() {
-  dialogOverlay.hidden = true;
+  dialogOverlay.classList.add('closing');
+  setTimeout(() => {
+    dialogOverlay.classList.remove('closing');
+    dialogOverlay.hidden = true;
+    document.body.style.overflow = '';
+  }, 200);
 }
 
 dialogClose.addEventListener('click', closeDialog);
 dialogOverlay.addEventListener('click', (e) => {
   if (e.target === dialogOverlay) closeDialog();
 });
+
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !dialogOverlay.hidden) closeDialog();
+  if (e.key !== 'Escape') return;
+  if (!viewer.hidden) closeViewer();
+  else if (!dialogOverlay.hidden) closeDialog();
 });
 
 snapshotsBtn.addEventListener('click', () => {
@@ -236,10 +444,12 @@ snapshotsBtn.addEventListener('click', () => {
   showSitesGrid();
 });
 
-/* ---------------- snapshots grid ---------------- */
+/* ============================================================
+   Library grid (per-site)
+   ============================================================ */
 
 async function showSitesGrid() {
-  dialogTitle.textContent = 'Snapshots';
+  dialogTitle.textContent = 'Library';
   dialogBack.hidden = true;
   dialogBack.onclick = null;
   dialogBody.innerHTML = '<div class="dialog-loading">Loading…</div>';
@@ -249,7 +459,11 @@ async function showSitesGrid() {
     const sites = await res.json();
 
     if (!sites.length) {
-      dialogBody.innerHTML = '<div class="dialog-empty">No archived sites yet.</div>';
+      dialogBody.innerHTML = `
+        <div class="dialog-empty">
+          <div class="tl-empty-art">🗂️</div>
+          <div>No archived sites yet.</div>
+        </div>`;
       return;
     }
 
@@ -265,20 +479,15 @@ async function showSitesGrid() {
         const domain = delBtn.dataset.deleteSite;
         const count = Number(delBtn.dataset.count);
 
-        if (!confirm(`Delete all ${count} snapshot${count === 1 ? '' : 's'} for ${domain}? This cannot be undone.`)) {
-          return;
-        }
+        if (!confirm(`Delete all ${count} snapshot${count === 1 ? '' : 's'} for ${domain}? This cannot be undone.`)) return;
 
         try {
           const res = await fetch(`/api/sites/${encodeURIComponent(domain)}`, { method: 'DELETE' });
           const data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            showToast(data.error || 'Delete failed', 'error');
-            return;
-          }
+          if (!res.ok) { showToast(data.error || 'Delete failed', 'error'); return; }
           showToast(`Deleted ${domain}`);
           showSitesGrid();
-          loadRecentGallery();
+          loadTimeline({ skeleton: false });
         } catch (err) {
           showToast(err.message || 'Delete failed', 'error');
         }
@@ -289,17 +498,13 @@ async function showSitesGrid() {
   }
 }
 
-function renderSiteCard(site) {
+function renderSiteCard(site, i) {
   return `
-    <div class="site-card" data-domain="${escapeHtml(site.domain)}">
+    <div class="site-card" data-domain="${escapeHtml(site.domain)}" style="animation-delay:${Math.min(i * 45, 500)}ms">
       <div class="site-thumb" style="${thumbStyle(site.thumbnail)}">${site.thumbnail ? '' : '🌐'}</div>
-      <button
-        type="button"
-        class="site-delete-btn"
-        data-delete-site="${escapeHtml(site.domain)}"
-        data-count="${site.count}"
-        aria-label="Delete all snapshots for ${escapeHtml(site.domain)}"
-      >🗑️</button>
+      <button type="button" class="site-delete-btn"
+              data-delete-site="${escapeHtml(site.domain)}" data-count="${site.count}"
+              aria-label="Delete all snapshots for ${escapeHtml(site.domain)}">🗑️</button>
       <div class="site-info">
         <div class="site-domain">${escapeHtml(site.domain)}</div>
         <div class="site-meta">${site.count} snapshot${site.count === 1 ? '' : 's'} · ${escapeHtml(new Date(site.latestArchivedAt).toLocaleDateString())}</div>
@@ -312,11 +517,9 @@ function openSiteCalendar(domain) {
   showCalendar(domain);
 }
 
-/* ---------------- per-site calendar ---------------- */
-
-function dayKey(date) {
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-}
+/* ============================================================
+   Per-site calendar
+   ============================================================ */
 
 async function showCalendar(domain) {
   dialogTitle.textContent = domain;
@@ -351,13 +554,14 @@ async function showCalendar(domain) {
 
     dialogBody.innerHTML = `
       <div class="calendar-header">
-        <button class="icon-btn" id="cal-prev" type="button" aria-label="Previous month">‹</button>
+        <button class="icon-pill" id="cal-prev" type="button" aria-label="Previous month">‹</button>
         <span id="cal-month-label"></span>
-        <button class="icon-btn" id="cal-next" type="button" aria-label="Next month">›</button>
+        <button class="icon-pill" id="cal-next" type="button" aria-label="Next month">›</button>
       </div>
       <div class="calendar-grid" id="calendar-grid"></div>
       <div class="calendar-day-panel" id="calendar-day-panel"></div>
     `;
+    wireRipples(dialogBody);
 
     const grid = document.getElementById('calendar-grid');
     const monthLabel = document.getElementById('cal-month-label');
@@ -408,15 +612,21 @@ async function showCalendar(domain) {
       dayPanel.innerHTML = `
         <div class="day-panel-header">
           <span>${dayEntries.length} snapshot${dayEntries.length === 1 ? '' : 's'} on ${dateLabel}</span>
-          <button type="button" class="btn-text btn-danger" id="delete-day-btn">🗑️ Delete this day</button>
+          <button type="button" class="btn-tonal btn-danger" id="delete-day-btn">🗑️ Delete this day</button>
         </div>
-        ${dayEntries.map(renderSnapshotRow).join('')}
+        ${dayEntries.map((entry, i) => renderSnapshotRow(entry, i, domain)).join('')}
       `;
+      wireRipples(dayPanel);
+
+      dayPanel.querySelectorAll('[data-view-index]').forEach((thumb) => {
+        thumb.addEventListener('click', () => {
+          const entry = dayEntries[Number(thumb.dataset.viewIndex)];
+          openViewer({ ...entry, domain });
+        });
+      });
 
       document.getElementById('delete-day-btn').addEventListener('click', async () => {
-        if (!confirm(`Delete ${dayEntries.length} snapshot${dayEntries.length === 1 ? '' : 's'} from ${dateLabel}? This cannot be undone.`)) {
-          return;
-        }
+        if (!confirm(`Delete ${dayEntries.length} snapshot${dayEntries.length === 1 ? '' : 's'} from ${dateLabel}? This cannot be undone.`)) return;
 
         try {
           const res = await fetch('/api/archives/delete', {
@@ -425,13 +635,10 @@ async function showCalendar(domain) {
             body: JSON.stringify({ dirs: dayEntries.map((e) => e.dir) })
           });
           const data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            showToast(data.error || 'Delete failed', 'error');
-            return;
-          }
+          if (!res.ok) { showToast(data.error || 'Delete failed', 'error'); return; }
           showToast('Day deleted');
           showCalendar(domain);
-          loadRecentGallery();
+          loadTimeline({ skeleton: false });
         } catch (err) {
           showToast(err.message || 'Delete failed', 'error');
         }
@@ -456,12 +663,13 @@ async function showCalendar(domain) {
   }
 }
 
-function renderSnapshotRow(entry) {
+function renderSnapshotRow(entry, i, domain) {
   const time = new Date(entry.archivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const subText = entry.sublinkCount ? ` · ${entry.sublinkCount} sub-link${entry.sublinkCount === 1 ? '' : 's'}` : '';
   return `
-    <div class="snapshot-row">
-      <div class="snapshot-thumb" style="${thumbStyle(entry.thumbnail)}"></div>
+    <div class="snapshot-row" style="animation-delay:${Math.min(i * 45, 400)}ms">
+      <div class="snapshot-thumb" data-view-index="${i}" style="${thumbStyle(entry.thumbnail)}"
+           role="button" tabindex="0" aria-label="Open this snapshot"></div>
       <div class="snapshot-info">
         <div class="snapshot-url">${escapeHtml(entry.url)}</div>
         <div class="snapshot-time">${time}${subText}</div>
@@ -473,10 +681,13 @@ function renderSnapshotRow(entry) {
     </div>`;
 }
 
-/* ---------------- export / import ---------------- */
+/* ============================================================
+   Export / import
+   ============================================================ */
 
 exportBtn.addEventListener('click', async () => {
   exportBtn.disabled = true;
+  appProgress.hidden = false;
   try {
     const res = await fetch('/api/export');
     if (!res.ok) {
@@ -498,10 +709,12 @@ exportBtn.addEventListener('click', async () => {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    showToast('Export downloaded');
   } catch (err) {
     showToast(err.message || 'Export failed', 'error');
   } finally {
     exportBtn.disabled = false;
+    appProgress.hidden = true;
   }
 });
 
@@ -515,22 +728,21 @@ importFile.addEventListener('change', async () => {
   formData.append('archive', file);
 
   importBtn.disabled = true;
+  appProgress.hidden = false;
   try {
     const res = await fetch('/api/import', { method: 'POST', body: formData });
     const data = await res.json();
 
-    if (!res.ok) {
-      showToast(data.error || 'Import failed', 'error');
-      return;
-    }
+    if (!res.ok) { showToast(data.error || 'Import failed', 'error'); return; }
 
     showToast('Import completed');
     if (!dialogOverlay.hidden) showSitesGrid();
-    loadRecentGallery();
+    loadTimeline({ skeleton: false });
   } catch (err) {
     showToast(err.message || 'Import failed', 'error');
   } finally {
     importBtn.disabled = false;
     importFile.value = '';
+    appProgress.hidden = true;
   }
 });

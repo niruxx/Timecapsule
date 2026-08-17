@@ -5,7 +5,7 @@ const puppeteer = require('puppeteer');
 const multer = require('multer');
 const AdmZip = require('adm-zip');
 const { archiveUrl } = require('./lib/archiver');
-const { listSites, listSiteHistory, searchArchives, deleteSite, deleteMainDirs } = require('./lib/history');
+const { listSites, listTimeline, listSiteHistory, searchArchives, deleteSite, deleteMainDirs } = require('./lib/history');
 const { log, logTraffic } = require('./lib/logger');
 
 const PORT = process.env.PORT || 3000;
@@ -87,6 +87,14 @@ app.post('/api/archive', async (req, res) => {
 app.get('/api/sites', async (req, res) => {
   try {
     res.json(await listSites(ARCHIVE_DIR));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/timeline', async (req, res) => {
+  try {
+    res.json(await listTimeline(ARCHIVE_DIR));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -5,8 +5,35 @@
 
 **A self-hosted, open-source alternative to Archive.org and ArchiveBox.** Paste a URL into the address bar and ArchiveNet renders it in headless Chrome, then saves a real, self-contained HTML snapshot, a PDF, and a thumbnail — all on your own disk, under your own control.
 
+The UI is a Google Photos-style timeline: every snapshot you've ever taken, grouped by day, in one scrollable grid — click any thumbnail to open it full-screen.
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/timeline-light.png" alt="Timeline in light mode"></td>
+<td width="50%"><img src="docs/screenshots/timeline-dark.png" alt="Timeline in dark mode"></td>
+</tr>
+<tr>
+<td align="center"><sub><b>Timeline</b> — light mode</sub></td>
+<td align="center"><sub><b>Timeline</b> — dark mode, with the animated aurora background</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/library.png" alt="Library grid of every archived site"></td>
+<td width="50%"><img src="docs/screenshots/calendar.png" alt="Per-site calendar of archive dates"></td>
+</tr>
+<tr>
+<td align="center"><sub><b>Library</b> — every archived site, thumbnail-first</sub></td>
+<td align="center"><sub><b>Calendar</b> — every date a site was archived, Wayback-Machine-style</sub></td>
+</tr>
+</table>
+
+<img src="docs/screenshots/viewer.png" alt="Full-screen snapshot viewer" width="100%">
+<p align="center"><sub><b>Viewer</b> — open any snapshot full-screen, with Open HTML / Open PDF / Delete right there</sub></p>
+
 ## Contents
 
+- [Screenshots](#screenshots)
 - [Features](#features)
 - [Installing](#installing)
 - [Running on a Workstation](#running-on-a-workstation)
@@ -27,10 +54,10 @@
 | Feature | What it does |
 |---|---|
 | **Archive** | Paste a URL, get back HTML + PDF + a thumbnail, saved to disk. |
-| **Recent gallery** | Thumbnails of the most recently archived sites, right below the address bar. |
+| **Timeline** | Every snapshot you've ever taken, newest first, grouped into "Today" / "Yesterday" / dated sections — just like Google Photos. Click a thumbnail to open it full-screen in a lightbox, with Open HTML / Open PDF / Delete right there. |
 | **Recursive archiving** | Optionally crawl and archive an entire site instead of just the page you typed (warns you first — it's much heavier). |
 | **Search** | Live search across every archived URL, including sub-links, from the top bar. |
-| **Snapshots** | A thumbnail grid of every archived site; click through to a Wayback-Machine-style calendar of every date it was archived. Delete a single day's snapshots from the calendar, or an entire site's history from the grid. |
+| **Library** | A thumbnail grid of every archived site; click through to a Wayback-Machine-style calendar of every date it was archived. Delete a single day's snapshots from the calendar, or an entire site's history from the grid. |
 | **Export / Import** | Back up everything to a single `.zip` and restore it later — including onto a different OS. |
 | **Dark mode** | Follows your system theme by default; toggle it manually from the top bar. The animated background changes mood with it — soft pastels in light mode, a glowing aurora in dark mode. |
 | **Logging** | Prints progress to the terminal as pages are archived, and appends every archive request (URL + requester IP) to `traffic.log`. |
@@ -100,7 +127,7 @@ pm2 restart archivenet   # or just re-run `npm start` if you run it in the foreg
 
 ## Hosting as a Server
 
-ArchiveNet is a plain Node/Express process — any host that can run a long-lived Node service works. A typical self-hosted setup:
+ArchiveNet is a plain Node/Express process — any host that can run a long-lived Node service works, from a spare machine at home to a small VPS. This walks through setting it up on a **dedicated server that stays on 24/7**, so it just keeps archiving whenever you need it without you having to start it by hand.
 
 1. **Get the code onto the server** and run `npm install` there (Chromium is downloaded per-platform, so don't just copy `node_modules/` from a different OS).
 2. **Keep it running** with pm2 (see [Managing the Service](#managing-the-service)) and make it survive reboots:
@@ -158,6 +185,24 @@ docker build -t archivenet .
 docker run -d -p 3000:3000 -v $(pwd)/archived:/app/archived --name archivenet archivenet
 ```
 
+### Keeping it healthy long-term
+
+A couple of things are worth checking in on periodically once ArchiveNet has been running unattended for a while, since neither grows on its own until you notice — they just quietly get bigger:
+
+- **`archived/` grows without limit.** Every archive adds an HTML file, a PDF, and a thumbnail, and [recursive archiving](#recursive-archiving) multiplies that by up to 100 pages per run. Keep an eye on free disk space (`df -h` on Linux) and prune old sites you don't need from the [Library](#features) view, or export and move them elsewhere with [Export and import](#export-and-import).
+- **`traffic.log` grows without limit too**, one line per archive request forever. On Linux, hand it to `logrotate` rather than letting it grow unbounded:
+  ```
+  # /etc/logrotate.d/archivenet
+  /opt/archivenet/traffic.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+  }
+  ```
+- **Crash recovery is already handled** by the setup above — pm2 restarts a crashed process automatically, and the systemd unit's `Restart=on-failure` does the same — so there's nothing extra to configure there, just something worth knowing is already covered.
+
 ## How It Works
 
 ### How pages are captured
@@ -201,7 +246,7 @@ archived/
 
 - The URL you type always becomes `archived/<domain>/<timestamp>/`, whether or not it has a path.
 - Same-domain links discovered on that page are archived inside that same folder, under `sub-links/<path>/<timestamp>/` (see [Recursive archiving](#recursive-archiving) for how many).
-- The Search, Snapshots, and calendar views are all derived by walking this directory tree (`lib/history.js`) — there's no separate database.
+- The timeline, Search, Library, and calendar views are all derived by walking this directory tree (`lib/history.js`) — there's no separate database.
 
 ### Export and import
 
