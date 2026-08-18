@@ -108,7 +108,7 @@ wireRipples();
    Theme
    ============================================================ */
 
-const THEME_KEY = 'archivenet-theme';
+const THEME_KEY = 'timecapsule-theme';
 const themeIcon = themeToggle.querySelector('.theme-icon');
 
 function syncThemeToggle(theme) {
@@ -699,7 +699,7 @@ exportBtn.addEventListener('click', async () => {
     const blob = await res.blob();
     const disposition = res.headers.get('Content-Disposition') || '';
     const match = disposition.match(/filename="(.+)"/);
-    const filename = match ? match[1] : 'archivenet-export.zip';
+    const filename = match ? match[1] : 'timecapsule-export.zip';
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

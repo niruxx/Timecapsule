@@ -1,5 +1,5 @@
 {
-  "name": "archivenet",
+  "name": "timecapsule",
   "version": "1.0.0",
   "description": "Self-hosted website archiver - saves pages as HTML and PDF in a timestamped directory tree.",
   "main": "server.js",

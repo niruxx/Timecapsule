@@ -151,7 +151,7 @@ app.get('/api/export', async (req, res) => {
     const zip = new AdmZip();
     zip.addLocalFolder(ARCHIVE_DIR);
     const buffer = zip.toBuffer();
-    const filename = `archivenet-export-${new Date().toISOString().slice(0, 10)}.zip`;
+    const filename = `timecapsule-export-${new Date().toISOString().slice(0, 10)}.zip`;
     res.set({
       'Content-Type': 'application/zip',
       'Content-Disposition': `attachment; filename="${filename}"`,
@@ -173,12 +173,12 @@ app.post('/api/import', upload.single('archive'), async (req, res) => {
     zip.extractAllTo(ARCHIVE_DIR, true);
     res.json({ ok: true });
   } catch (err) {
-    res.status(400).json({ error: `That doesn't look like a valid ArchiveNet export: ${err.message}` });
+    res.status(400).json({ error: `That doesn't look like a valid TimeCapsule export: ${err.message}` });
   }
 });
 
 app.listen(PORT, () => {
-  log(`ArchiveNet running at http://localhost:${PORT}`);
+  log(`TimeCapsule running at http://localhost:${PORT}`);
 });
 
 process.on('SIGINT', async () => {

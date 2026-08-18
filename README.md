@@ -1,9 +1,9 @@
-# ArchiveNet
+# TimeCapsule
 
 ![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)
 
-**A self-hosted, open-source alternative to Archive.org and ArchiveBox.** Paste a URL into the address bar and ArchiveNet renders it in headless Chrome, then saves a real, self-contained HTML snapshot, a PDF, and a thumbnail — all on your own disk, under your own control.
+**A self-hosted, open-source alternative to Archive.org and ArchiveBox.** Paste a URL into the address bar and TimeCapsule renders it in headless Chrome, then saves a real, self-contained HTML snapshot, a PDF, and a thumbnail — all on your own disk, under your own control.
 
 The UI is a Google Photos-style timeline: every snapshot you've ever taken, grouped by day, in one scrollable grid — click any thumbnail to open it full-screen.
 
@@ -68,7 +68,7 @@ The UI is a Google Photos-style timeline: every snapshot you've ever taken, grou
 
 ```
 git clone <this-repository-url>
-cd ArchiveNet
+cd TimeCapsule
 npm install
 ```
 
@@ -97,16 +97,16 @@ PORT=8080 npm start
 
 ## Managing the Service
 
-This section is for running ArchiveNet continuously — e.g. always-on on a home server or NAS — as opposed to starting it only when you want to use it.
+This section is for running TimeCapsule continuously — e.g. always-on on a home server or NAS — as opposed to starting it only when you want to use it.
 
 **Starting / stopping / restarting**, using [pm2](https://pm2.keymetrics.io/) as a process manager:
 
 ```
 npm install -g pm2
-pm2 start server.js --name archivenet   # start
-pm2 stop archivenet                     # stop
-pm2 restart archivenet                  # restart
-pm2 logs archivenet                     # tail logs
+pm2 start server.js --name timecapsule   # start
+pm2 stop timecapsule                     # stop
+pm2 restart timecapsule                  # restart
+pm2 logs timecapsule                     # tail logs
 ```
 
 Running it as a systemd service instead is covered under [Hosting as a Server](#hosting-as-a-server) — that also makes it survive a reboot.
@@ -116,18 +116,18 @@ Running it as a systemd service instead is covered under [Hosting as a Server](#
 ```
 git pull
 npm install
-pm2 restart archivenet   # or just re-run `npm start` if you run it in the foreground
+pm2 restart timecapsule   # or just re-run `npm start` if you run it in the foreground
 ```
 
 `npm install` re-checks Puppeteer's bundled Chromium and only re-downloads it if the required version changed.
 
-**Backing up:** everything ArchiveNet knows lives under `archived/`. Click Export in the top bar (or hit `GET /api/export`) to download it as a single `.zip` — see [Export and import](#export-and-import) for the full picture, including moving to a different OS entirely.
+**Backing up:** everything TimeCapsule knows lives under `archived/`. Click Export in the top bar (or hit `GET /api/export`) to download it as a single `.zip` — see [Export and import](#export-and-import) for the full picture, including moving to a different OS entirely.
 
-**Changing the port:** set the `PORT` environment variable before starting. With pm2, set it on the first launch (`PORT=8080 pm2 start server.js --name archivenet`) — pm2 remembers the environment from that run.
+**Changing the port:** set the `PORT` environment variable before starting. With pm2, set it on the first launch (`PORT=8080 pm2 start server.js --name timecapsule`) — pm2 remembers the environment from that run.
 
 ## Hosting as a Server
 
-ArchiveNet is a plain Node/Express process — any host that can run a long-lived Node service works, from a spare machine at home to a small VPS. This walks through setting it up on a **dedicated server that stays on 24/7**, so it just keeps archiving whenever you need it without you having to start it by hand.
+TimeCapsule is a plain Node/Express process — any host that can run a long-lived Node service works, from a spare machine at home to a small VPS. This walks through setting it up on a **dedicated server that stays on 24/7**, so it just keeps archiving whenever you need it without you having to start it by hand.
 
 1. **Get the code onto the server** and run `npm install` there (Chromium is downloaded per-platform, so don't just copy `node_modules/` from a different OS).
 2. **Keep it running** with pm2 (see [Managing the Service](#managing-the-service)) and make it survive reboots:
@@ -137,22 +137,22 @@ ArchiveNet is a plain Node/Express process — any host that can run a long-live
    ```
    Or use a systemd unit instead:
    ```ini
-   # /etc/systemd/system/archivenet.service
+   # /etc/systemd/system/timecapsule.service
    [Unit]
-   Description=ArchiveNet
+   Description=TimeCapsule
    After=network.target
 
    [Service]
-   WorkingDirectory=/opt/archivenet
+   WorkingDirectory=/opt/timecapsule
    ExecStart=/usr/bin/node server.js
    Environment=PORT=3000
    Restart=on-failure
-   User=archivenet
+   User=timecapsule
 
    [Install]
    WantedBy=multi-user.target
    ```
-   Then `sudo systemctl enable --now archivenet`.
+   Then `sudo systemctl enable --now timecapsule`.
 3. **Put a reverse proxy in front of it** (nginx, Caddy, etc.) to handle TLS and your domain name, proxying to `http://127.0.0.1:3000`. Caddy example:
    ```
    archive.yourdomain.com {
@@ -161,7 +161,7 @@ ArchiveNet is a plain Node/Express process — any host that can run a long-live
    ```
    If you plan to use [recursive archiving](#recursive-archiving) on larger sites, raise your proxy's read/response timeout (e.g. nginx's `proxy_read_timeout`) — the request to `/api/archive` doesn't return until the whole crawl finishes, and a big one can take a while.
 4. **Persist the `archived/` directory.** It holds every saved archive, so back it up like you would a database and, if you containerize the app, mount it as a volume rather than baking it into the image.
-5. **Access control.** ArchiveNet has no authentication of its own — anything reachable can trigger an archive and browse `archived/`. If exposing it beyond your local network, put it behind your reverse proxy's auth (e.g. Caddy's `basic_auth`, an nginx `auth_basic` block, or a VPN/tailnet) rather than the open internet.
+5. **Access control.** TimeCapsule has no authentication of its own — anything reachable can trigger an archive and browse `archived/`. If exposing it beyond your local network, put it behind your reverse proxy's auth (e.g. Caddy's `basic_auth`, an nginx `auth_basic` block, or a VPN/tailnet) rather than the open internet.
 
 ### Docker (optional)
 
@@ -181,19 +181,19 @@ CMD ["node", "server.js"]
 Mount `archived/` as a volume so archives survive container restarts:
 
 ```
-docker build -t archivenet .
-docker run -d -p 3000:3000 -v $(pwd)/archived:/app/archived --name archivenet archivenet
+docker build -t timecapsule .
+docker run -d -p 3000:3000 -v $(pwd)/archived:/app/archived --name timecapsule timecapsule
 ```
 
 ### Keeping it healthy long-term
 
-A couple of things are worth checking in on periodically once ArchiveNet has been running unattended for a while, since neither grows on its own until you notice — they just quietly get bigger:
+A couple of things are worth checking in on periodically once TimeCapsule has been running unattended for a while, since neither grows on its own until you notice — they just quietly get bigger:
 
 - **`archived/` grows without limit.** Every archive adds an HTML file, a PDF, and a thumbnail, and [recursive archiving](#recursive-archiving) multiplies that by up to 100 pages per run. Keep an eye on free disk space (`df -h` on Linux) and prune old sites you don't need from the [Library](#features) view, or export and move them elsewhere with [Export and import](#export-and-import).
 - **`traffic.log` grows without limit too**, one line per archive request forever. On Linux, hand it to `logrotate` rather than letting it grow unbounded:
   ```
-  # /etc/logrotate.d/archivenet
-  /opt/archivenet/traffic.log {
+  # /etc/logrotate.d/timecapsule
+  /opt/timecapsule/traffic.log {
     weekly
     rotate 8
     compress
@@ -220,7 +220,7 @@ Known limitation: assets loaded from Chromium's disk cache (rather than over the
 
 ### Recursive archiving
 
-By default, ArchiveNet only archives links found directly on the page you typed in (up to `MAX_SUBLINKS`, 15). Checking **Recursive** under the address bar archives the whole site instead: it follows same-domain links breadth-first — pages found on those sub-pages get crawled too, and so on — until either there's nothing left to follow or it hits the `MAX_RECURSIVE_PAGES` safety cap (100 pages, including the main one). All of it still lands in the same place: `archived/<domain>/<timestamp>/sub-links/<path>/<timestamp>/`, exactly like non-recursive sub-links do.
+By default, TimeCapsule only archives links found directly on the page you typed in (up to `MAX_SUBLINKS`, 15). Checking **Recursive** under the address bar archives the whole site instead: it follows same-domain links breadth-first — pages found on those sub-pages get crawled too, and so on — until either there's nothing left to follow or it hits the `MAX_RECURSIVE_PAGES` safety cap (100 pages, including the main one). All of it still lands in the same place: `archived/<domain>/<timestamp>/sub-links/<path>/<timestamp>/`, exactly like non-recursive sub-links do.
 
 The UI warns before you enable it because a full-site crawl is dramatically heavier than a normal archive: many more pages means many more HTML/PDF/thumbnail files (a lot more disk space) and a much longer archive run, since every page still gets the full capture treatment (scroll, wait, inline assets, PDF, screenshot) one at a time. If the site has more pages than the cap allows, the response — and the completion toast — say so rather than silently archiving only part of the site without telling you.
 
@@ -250,20 +250,20 @@ archived/
 
 ### Export and import
 
-Everything ArchiveNet knows is just files under `archived/` — folder and file names use only plain ASCII, so the archive tree itself is already portable across Windows/macOS/Linux. Export/Import just wraps that in a single file for convenience:
+Everything TimeCapsule knows is just files under `archived/` — folder and file names use only plain ASCII, so the archive tree itself is already portable across Windows/macOS/Linux. Export/Import just wraps that in a single file for convenience:
 
 - **Export** (top bar, or `GET /api/export`) downloads a `.zip` of the entire `archived/` directory.
 - **Import** (top bar, or `POST /api/import` with the zip as a `multipart/form-data` field named `archive`) extracts that zip into `archived/` on whatever machine you run it on. Existing archives already on that machine are kept — importing merges rather than replaces, so it's also safe to combine two machines' archives into one.
 
-To move to a different OS: click Export on the old machine, copy the `.zip` over by whatever means (USB drive, cloud storage, `scp`, etc.), [install](#installing) ArchiveNet on the new machine, start it, and click Import.
+To move to a different OS: click Export on the old machine, copy the `.zip` over by whatever means (USB drive, cloud storage, `scp`, etc.), [install](#installing) TimeCapsule on the new machine, start it, and click Import.
 
 ### Dark mode
 
-ArchiveNet follows your system's light/dark preference (`prefers-color-scheme`) the first time you open it. Use the 🌙/☀️ toggle in the top-right of the app bar to override that — your choice is remembered in the browser (`localStorage`) and takes precedence over the system setting from then on, independently per browser/device.
+TimeCapsule follows your system's light/dark preference (`prefers-color-scheme`) the first time you open it. Use the 🌙/☀️ toggle in the top-right of the app bar to override that — your choice is remembered in the browser (`localStorage`) and takes precedence over the system setting from then on, independently per browser/device.
 
 ### Logging
 
-While it's running, ArchiveNet prints one line per event to the terminal, each timestamped:
+While it's running, TimeCapsule prints one line per event to the terminal, each timestamped:
 
 ```
 [2026-07-26T05:09:50.014Z] Archive requested: https://example.com/ from ::1
@@ -280,7 +280,7 @@ Every top-level archive request also appends one line to `traffic.log` in the pr
 2026-07-26T05:10:00.147Z https://www.iana.org/help/example-domains 192.168.1.42
 ```
 
-(Sub-links discovered and archived along the way show up in the terminal output, not as separate `traffic.log` lines — the log tracks *requests*, one per site a client actually asked for.) The IP is always normalized to IPv4 where possible — Node's dual-stack server reports IPv4 clients as an IPv6-mapped address (`::ffff:1.2.3.4`) or the IPv6 loopback (`::1`), and both get converted back to plain IPv4 before logging. If ArchiveNet is behind a reverse proxy, the IP recorded is taken from the `X-Forwarded-For` header when present (which nginx and Caddy set by default), falling back to the direct connection's address otherwise.
+(Sub-links discovered and archived along the way show up in the terminal output, not as separate `traffic.log` lines — the log tracks *requests*, one per site a client actually asked for.) The IP is always normalized to IPv4 where possible — Node's dual-stack server reports IPv4 clients as an IPv6-mapped address (`::ffff:1.2.3.4`) or the IPv6 loopback (`::1`), and both get converted back to plain IPv4 before logging. If TimeCapsule is behind a reverse proxy, the IP recorded is taken from the `X-Forwarded-For` header when present (which nginx and Caddy set by default), falling back to the direct connection's address otherwise.
 
 All of this — what gets printed, what gets written to `traffic.log`, and in what format — is controlled from one place: `lib/logger.js`. Edit `log()` or `logTraffic()` there to change it (e.g. write JSON lines instead, log to a different file, or add fields).
 
