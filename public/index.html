@@ -61,6 +61,10 @@
         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M5 20h14v-2H5zm0-10h4v6h6v-6h4l-7-7z"/></svg>
       </button>
       <input id="import-file" type="file" accept=".zip" hidden>
+      <button id="tags-btn" type="button" class="btn-tonal" hidden>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.41l9 9c.36.36.86.59 1.41.59.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42M13 20l-9-9V4h7v.01l9 9z"/><circle cx="6.5" cy="6.5" r="1.5"/></svg>
+        Tags
+      </button>
       <button id="snapshots-btn" type="button" class="btn-tonal">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M22 16V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2m-11-4 2.03 2.71L16 11l4 5H8zM2 6v14a2 2 0 0 0 2 2h14v-2H4V6z"/></svg>
         Library
@@ -86,15 +90,50 @@
       </button>
     </form>
 
-    <label class="recursive-toggle">
-      <input type="checkbox" id="recursive-checkbox">
-      <span class="switch" aria-hidden="true"></span>
-      <span class="recursive-label">Archive the entire site, not just this page</span>
-    </label>
+    <div class="depth-control">
+      <span class="depth-label">How much to archive</span>
+      <div class="depth-options" role="radiogroup" aria-label="Archive depth">
+        <label class="depth-option">
+          <input type="radio" name="depth" value="page">
+          <span>Just this page</span>
+        </label>
+        <label class="depth-option">
+          <input type="radio" name="depth" value="links" checked>
+          <span>This page + its links</span>
+        </label>
+        <label class="depth-option">
+          <input type="radio" name="depth" value="recursive">
+          <span>Entire site</span>
+        </label>
+      </div>
+    </div>
     <div id="recursive-warning" class="recursive-warning" hidden>
       <span aria-hidden="true">⚠️</span>
       <span>Crawls up to 100 pages instead of 15. The archive will be much larger and take considerably longer.</span>
     </div>
+
+    <details class="advanced-options">
+      <summary>Advanced options</summary>
+      <div class="advanced-grid">
+        <label class="advanced-field">
+          <span>Custom User-Agent</span>
+          <input type="text" id="user-agent-input" placeholder="Leave blank to use the default" autocomplete="off">
+        </label>
+        <label class="advanced-field">
+          <span>Extra wait after page load (seconds)</span>
+          <input type="number" id="extra-wait-input" min="0" max="30" step="1" placeholder="8">
+        </label>
+        <div class="advanced-field">
+          <span>Import cookies <small>(for paywalled or logged-in pages)</small></span>
+          <div class="cookie-upload-row">
+            <button type="button" id="cookies-btn" class="btn-tonal">Choose file</button>
+            <span id="cookies-filename" class="cookies-filename">No file chosen — Netscape cookies.txt or JSON</span>
+            <button type="button" id="cookies-clear" class="icon-pill" aria-label="Clear cookies file" hidden>✕</button>
+          </div>
+          <input type="file" id="cookies-file" accept=".txt,.json" hidden>
+        </div>
+      </div>
+    </details>
   </section>
 
   <section id="timeline" class="timeline" aria-live="polite"></section>
@@ -130,19 +169,46 @@
       <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
     </button>
     <div class="viewer-meta">
+      <div id="viewer-title" class="viewer-title" hidden></div>
       <div id="viewer-url" class="viewer-url"></div>
       <div id="viewer-date" class="viewer-date"></div>
     </div>
     <div class="viewer-actions">
       <a id="viewer-html" class="btn-tonal" target="_blank" rel="noopener">Open HTML</a>
       <a id="viewer-pdf" class="btn-tonal" target="_blank" rel="noopener">Open PDF</a>
+      <a id="viewer-screenshot" class="btn-tonal" target="_blank" rel="noopener" hidden>Open Screenshot</a>
+      <a id="viewer-article" class="btn-tonal" target="_blank" rel="noopener" hidden>Open Article</a>
+      <a id="viewer-warc" class="btn-tonal" target="_blank" rel="noopener" hidden>Download WARC</a>
       <button id="viewer-delete" class="icon-pill viewer-icon" type="button" aria-label="Delete this snapshot">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></svg>
       </button>
     </div>
   </div>
+  <div id="viewer-media" class="viewer-media" hidden></div>
+  <div id="viewer-ai" class="viewer-ai" hidden>
+    <div id="viewer-ai-summary" class="viewer-ai-summary"></div>
+    <div id="viewer-ai-tags" class="viewer-ai-tags"></div>
+  </div>
+  <div id="viewer-change" class="viewer-change" hidden>
+    <span id="viewer-change-text"></span>
+    <button type="button" id="viewer-change-btn" class="btn-tonal" hidden>View Changes</button>
+  </div>
   <div class="viewer-stage">
     <img id="viewer-img" alt="" >
+  </div>
+</div>
+
+<div id="diff-overlay" class="dialog-overlay" hidden>
+  <div class="dialog diff-dialog" role="dialog" aria-modal="true" aria-labelledby="diff-title">
+    <div class="dialog-header">
+      <div class="dialog-title-group">
+        <h2 id="diff-title">Changes since last archive</h2>
+      </div>
+      <button id="diff-close" class="icon-pill" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div id="diff-body" class="dialog-body diff-body"></div>
   </div>
 </div>
 

@@ -1,3 +1,5 @@
 node_modules/
 archived/
 traffic.log
+bin/
+data/

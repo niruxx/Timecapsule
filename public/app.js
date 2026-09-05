@@ -5,9 +5,16 @@
 const form = document.getElementById('archive-form');
 const input = document.getElementById('url-input');
 const btn = document.getElementById('archive-btn');
-const recursiveCheckbox = document.getElementById('recursive-checkbox');
+const depthInputs = document.querySelectorAll('input[name="depth"]');
 const recursiveWarning = document.getElementById('recursive-warning');
 const appProgress = document.getElementById('app-progress');
+
+const userAgentInput = document.getElementById('user-agent-input');
+const extraWaitInput = document.getElementById('extra-wait-input');
+const cookiesBtn = document.getElementById('cookies-btn');
+const cookiesFile = document.getElementById('cookies-file');
+const cookiesFilename = document.getElementById('cookies-filename');
+const cookiesClear = document.getElementById('cookies-clear');
 
 const toast = document.getElementById('toast');
 const toastIcon = document.getElementById('toast-icon');
@@ -18,6 +25,7 @@ const searchClear = document.getElementById('search-clear');
 const searchResults = document.getElementById('search-results');
 
 const snapshotsBtn = document.getElementById('snapshots-btn');
+const tagsBtn = document.getElementById('tags-btn');
 const exportBtn = document.getElementById('export-btn');
 const importBtn = document.getElementById('import-btn');
 const importFile = document.getElementById('import-file');
@@ -35,8 +43,23 @@ const viewer = document.getElementById('viewer');
 const viewerImg = document.getElementById('viewer-img');
 const viewerUrl = document.getElementById('viewer-url');
 const viewerDate = document.getElementById('viewer-date');
+const viewerTitle = document.getElementById('viewer-title');
 const viewerHtml = document.getElementById('viewer-html');
 const viewerPdf = document.getElementById('viewer-pdf');
+const viewerScreenshot = document.getElementById('viewer-screenshot');
+const viewerArticle = document.getElementById('viewer-article');
+const viewerWarc = document.getElementById('viewer-warc');
+const viewerMedia = document.getElementById('viewer-media');
+const viewerAi = document.getElementById('viewer-ai');
+const viewerAiSummary = document.getElementById('viewer-ai-summary');
+const viewerAiTags = document.getElementById('viewer-ai-tags');
+const viewerChange = document.getElementById('viewer-change');
+const viewerChangeText = document.getElementById('viewer-change-text');
+const viewerChangeBtn = document.getElementById('viewer-change-btn');
+
+const diffOverlay = document.getElementById('diff-overlay');
+const diffClose = document.getElementById('diff-close');
+const diffBody = document.getElementById('diff-body');
 const viewerClose = document.getElementById('viewer-close');
 const viewerDelete = document.getElementById('viewer-delete');
 
@@ -54,6 +77,14 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+// Full-text search snippets come back from the server with '‹'/'›' marking the matched terms
+// (see lib/search-index.js) instead of real <mark> tags, specifically so the snippet text - which
+// is untrusted page content, not markup - can be escaped safely before those markers are turned
+// into real highlighting.
+function renderSnippet(snippet) {
+  return escapeHtml(snippet).replace(/‹/g, '<mark>').replace(/›/g, '</mark>');
 }
 
 function thumbStyle(thumbnail) {
@@ -232,6 +263,7 @@ function renderTimelineCard(entry, i) {
 }
 
 loadTimeline();
+refreshTagsButton();
 
 /* ============================================================
    Viewer (lightbox)
@@ -241,16 +273,78 @@ let viewerEntry = null;
 
 function openViewer(entry) {
   viewerEntry = entry;
+  viewerTitle.textContent = entry.title || '';
+  viewerTitle.hidden = !entry.title;
   viewerUrl.textContent = entry.url;
   viewerDate.textContent = new Date(entry.archivedAt).toLocaleString();
   viewerImg.src = entry.thumbnail ? `/archived/${entry.thumbnail}` : '';
   viewerImg.alt = `Snapshot of ${entry.url}`;
   viewerHtml.href = `/archived/${entry.dir}/page.html`;
   viewerPdf.href = `/archived/${entry.dir}/page.pdf`;
+  viewerScreenshot.href = entry.screenshot ? `/archived/${entry.screenshot}` : '#';
+  viewerScreenshot.hidden = !entry.screenshot;
+  viewerArticle.href = entry.article ? `/archived/${entry.article}` : '#';
+  viewerArticle.hidden = !entry.article;
+  viewerWarc.href = entry.warc ? `/archived/${entry.warc}` : '#';
+  viewerWarc.hidden = !entry.warc;
+
+  const media = entry.media || [];
+  viewerMedia.hidden = !media.length;
+  viewerMedia.innerHTML = media.map((m, i) => {
+    const href = `/archived/${m.file.split('/').map(encodeURIComponent).join('/')}`;
+    return `<a href="${href}" target="_blank" rel="noopener">🎬 Video${media.length > 1 ? ` ${i + 1}` : ''}</a>`;
+  }).join('');
+
+  const tags = entry.tags || [];
+  viewerAi.hidden = !entry.summary && !tags.length;
+  viewerAiSummary.textContent = entry.summary || '';
+  viewerAiSummary.hidden = !entry.summary;
+  viewerAiTags.innerHTML = tags.map((tag) => `<span class="tag-chip">${escapeHtml(tag)}</span>`).join('');
+
+  viewerChange.hidden = !entry.change;
+  if (entry.change) {
+    viewerChangeText.textContent = entry.change.changed
+      ? `📝 Changed since last archive (+${entry.change.added} / -${entry.change.removed} lines)`
+      : '✓ No changes since last archive';
+    viewerChangeBtn.hidden = !entry.change.changed;
+  }
+
   viewer.hidden = false;
   document.body.style.overflow = 'hidden';
   viewerClose.focus();
 }
+
+viewerChangeBtn.addEventListener('click', () => showDiff(viewerEntry.previousArchiveDir, viewerEntry.dir));
+
+async function showDiff(fromDir, toDir) {
+  diffOverlay.hidden = false;
+  diffBody.innerHTML = '<div class="dialog-loading">Loading…</div>';
+
+  try {
+    const res = await fetch(`/api/diff?from=${encodeURIComponent(fromDir)}&to=${encodeURIComponent(toDir)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load the diff.');
+
+    diffBody.innerHTML = data.parts.map((part) => {
+      const text = escapeHtml(part.value);
+      if (part.added) return `<ins>${text}</ins>`;
+      if (part.removed) return `<del>${text}</del>`;
+      return text;
+    }).join('');
+  } catch (err) {
+    diffBody.innerHTML = `<div class="dialog-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closeDiff() {
+  diffOverlay.hidden = true;
+  diffBody.innerHTML = '';
+}
+
+diffClose.addEventListener('click', closeDiff);
+diffOverlay.addEventListener('click', (e) => {
+  if (e.target === diffOverlay) closeDiff();
+});
 
 function closeViewer() {
   viewer.classList.add('closing');
@@ -294,8 +388,34 @@ viewerDelete.addEventListener('click', async () => {
    Archive form
    ============================================================ */
 
-recursiveCheckbox.addEventListener('change', () => {
-  recursiveWarning.hidden = !recursiveCheckbox.checked;
+function selectedDepth() {
+  return Array.from(depthInputs).find((el) => el.checked).value;
+}
+
+depthInputs.forEach((el) => {
+  el.addEventListener('change', () => {
+    recursiveWarning.hidden = selectedDepth() !== 'recursive';
+  });
+});
+
+let cookiesText = '';
+
+cookiesBtn.addEventListener('click', () => cookiesFile.click());
+
+cookiesFile.addEventListener('change', async () => {
+  const file = cookiesFile.files[0];
+  if (!file) return;
+
+  cookiesText = await file.text();
+  cookiesFilename.textContent = file.name;
+  cookiesClear.hidden = false;
+});
+
+cookiesClear.addEventListener('click', () => {
+  cookiesText = '';
+  cookiesFile.value = '';
+  cookiesFilename.textContent = 'No file chosen — Netscape cookies.txt or JSON';
+  cookiesClear.hidden = true;
 });
 
 form.addEventListener('submit', async (e) => {
@@ -303,7 +423,9 @@ form.addEventListener('submit', async (e) => {
   const url = input.value.trim();
   if (!url) return;
 
-  const recursive = recursiveCheckbox.checked;
+  const depth = selectedDepth();
+  const userAgent = userAgentInput.value.trim() || undefined;
+  const extraWaitMs = extraWaitInput.value ? Number(extraWaitInput.value) * 1000 : undefined;
 
   btn.disabled = true;
   btn.classList.add('loading');
@@ -313,7 +435,7 @@ form.addEventListener('submit', async (e) => {
     const res = await fetch('/api/archive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, recursive })
+      body: JSON.stringify({ url, depth, userAgent, extraWaitMs, cookiesText: cookiesText || undefined })
     });
     const data = await res.json();
 
@@ -324,13 +446,18 @@ form.addEventListener('submit', async (e) => {
 
     const savedSublinks = data.sublinks.filter((s) => !s.error).length;
     const capNote = data.truncated ? ' — stopped at the page limit' : '';
-    showToast(
-      savedSublinks
-        ? `Archived — ${savedSublinks} sub-link${savedSublinks === 1 ? '' : 's'} saved${capNote}`
-        : 'Archive completed'
-    );
+    if (data.deduped) {
+      showToast('Already archived moments ago — reused that snapshot instead');
+    } else {
+      showToast(
+        savedSublinks
+          ? `Archived — ${savedSublinks} sub-link${savedSublinks === 1 ? '' : 's'} saved${capNote}`
+          : 'Archive completed'
+      );
+    }
     input.value = '';
     loadTimeline({ skeleton: false });
+    refreshTagsButton();
   } catch (err) {
     showToast(err.message || 'Archive failed', 'error');
   } finally {
@@ -390,10 +517,13 @@ function renderSearchResults(results) {
       <div class="search-row-text">
         <div class="search-row-url">${escapeHtml(entry.url)}</div>
         <div class="search-row-meta">${escapeHtml(entry.domain)} · ${escapeHtml(new Date(entry.archivedAt).toLocaleString())}</div>
+        ${entry.snippet ? `<div class="search-row-snippet">${renderSnippet(entry.snippet)}</div>` : ''}
       </div>
       <div class="snapshot-links">
         <a href="/archived/${entry.dir}/page.html" target="_blank" rel="noopener">HTML</a>
         <a href="/archived/${entry.dir}/page.pdf" target="_blank" rel="noopener">PDF</a>
+        ${entry.screenshot ? `<a href="/archived/${entry.screenshot}" target="_blank" rel="noopener">Screenshot</a>` : ''}
+        ${entry.article ? `<a href="/archived/${entry.article}" target="_blank" rel="noopener">Article</a>` : ''}
       </div>
     </div>
   `).join('');
@@ -435,7 +565,8 @@ dialogOverlay.addEventListener('click', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (!viewer.hidden) closeViewer();
+  if (!diffOverlay.hidden) closeDiff();
+  else if (!viewer.hidden) closeViewer();
   else if (!dialogOverlay.hidden) closeDialog();
 });
 
@@ -443,6 +574,90 @@ snapshotsBtn.addEventListener('click', () => {
   openDialog();
   showSitesGrid();
 });
+
+/* ============================================================
+   Tags (Smart Collections)
+   ============================================================ */
+
+// The Tags button only shows up once at least one archive actually has a tag - most installs
+// won't have AI tagging configured (it's optional, see lib/ai-enrich.js), so there's no reason
+// to advertise an empty feature.
+async function refreshTagsButton() {
+  try {
+    const res = await fetch('/api/tags');
+    const tags = await res.json();
+    tagsBtn.hidden = !Array.isArray(tags) || !tags.length;
+  } catch {
+    tagsBtn.hidden = true;
+  }
+}
+
+tagsBtn.addEventListener('click', () => {
+  openDialog();
+  showTagCloud();
+});
+
+async function showTagCloud() {
+  dialogTitle.textContent = 'Tags';
+  dialogBack.hidden = true;
+  dialogBack.onclick = null;
+  dialogBody.innerHTML = '<div class="dialog-loading">Loading…</div>';
+
+  try {
+    const res = await fetch('/api/tags');
+    const tags = await res.json();
+
+    if (!tags.length) {
+      dialogBody.innerHTML = `
+        <div class="dialog-empty">
+          <div class="tl-empty-art">🏷️</div>
+          <div>No tags yet.</div>
+        </div>`;
+      return;
+    }
+
+    dialogBody.innerHTML = `<div class="tag-cloud">${tags.map((t) => `
+      <button type="button" class="tag-cloud-chip" data-tag="${escapeHtml(t.tag)}">
+        ${escapeHtml(t.tag)} <span class="tag-cloud-count">${t.count}</span>
+      </button>
+    `).join('')}</div>`;
+    wireRipples(dialogBody);
+
+    dialogBody.querySelectorAll('[data-tag]').forEach((chip) => {
+      chip.addEventListener('click', () => showTagResults(chip.dataset.tag));
+    });
+  } catch (err) {
+    dialogBody.innerHTML = `<div class="dialog-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function showTagResults(tag) {
+  dialogTitle.textContent = `#${tag}`;
+  dialogBack.hidden = false;
+  dialogBack.onclick = () => showTagCloud();
+  dialogBody.innerHTML = '<div class="dialog-loading">Loading…</div>';
+
+  try {
+    const res = await fetch(`/api/tags/${encodeURIComponent(tag)}`);
+    const entries = await res.json();
+
+    if (!entries.length) {
+      dialogBody.innerHTML = '<div class="dialog-empty">No archives with this tag.</div>';
+      return;
+    }
+
+    dialogBody.innerHTML = entries.map((entry, i) => renderSnapshotRow(entry, i)).join('');
+    wireRipples(dialogBody);
+
+    dialogBody.querySelectorAll('[data-view-index]').forEach((thumb) => {
+      thumb.addEventListener('click', () => {
+        openViewer(entries[Number(thumb.dataset.viewIndex)]);
+      });
+    });
+  } catch (err) {
+    dialogBody.innerHTML = `<div class="dialog-empty">${escapeHtml(err.message)}</div>`;
+  }
+}
 
 /* ============================================================
    Library grid (per-site)
@@ -677,6 +892,8 @@ function renderSnapshotRow(entry, i, domain) {
       <div class="snapshot-links">
         <a href="/archived/${entry.dir}/page.html" target="_blank" rel="noopener">HTML</a>
         <a href="/archived/${entry.dir}/page.pdf" target="_blank" rel="noopener">PDF</a>
+        ${entry.screenshot ? `<a href="/archived/${entry.screenshot}" target="_blank" rel="noopener">Screenshot</a>` : ''}
+        ${entry.article ? `<a href="/archived/${entry.article}" target="_blank" rel="noopener">Article</a>` : ''}
       </div>
     </div>`;
 }

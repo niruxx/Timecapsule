@@ -42,7 +42,10 @@ The UI is a Google Photos-style timeline: every snapshot you've ever taken, grou
 - [Hosting as a Server](#hosting-as-a-server)
 - [How It Works](#how-it-works)
   - [How pages are captured](#how-pages-are-captured)
-  - [Recursive archiving](#recursive-archiving)
+  - [Archive depth](#archive-depth)
+  - [Advanced archive options](#advanced-archive-options)
+  - [AI summaries & tags](#ai-summaries--tags)
+  - [Change detection](#change-detection)
   - [Directory layout](#directory-layout)
   - [Export and import](#export-and-import)
   - [Dark mode](#dark-mode)
@@ -54,10 +57,19 @@ The UI is a Google Photos-style timeline: every snapshot you've ever taken, grou
 
 | Feature | What it does |
 |---|---|
-| **Archive** | Paste a URL, get back HTML + PDF + a thumbnail, saved to disk. |
+| **Archive** | Paste a URL, get back a self-contained single-file HTML snapshot (`page.html`, every stylesheet/image/font inlined as `data:` URIs) + a full-page vector PDF + a thumbnail, saved to disk. |
+| **WARC capture** | Every archive also saves `page.warc.gz` — a real [WARC/1.1](https://iipc.github.io/warc-specifications/) file built from the actual HTTP request/response pairs Chromium made while loading the page, parseable by warcio/pywb/ReplayWeb.page. Capped at the same per-resource size limit as the HTML inlining, so very large resources appear as headers without a full replayable body — see [How pages are captured](#how-pages-are-captured). |
+| **Custom User-Agent, extra wait & cookie import** | "Advanced options" under the address bar lets you override the browser's User-Agent, add extra time after the page loads (for slow JS-heavy sites), and import cookies (Netscape `cookies.txt` or JSON) so paywalled or logged-in pages archive as you'd actually see them. |
+| **Media extractor** | Downloads any video/audio TimeCapsule can find on the page (native `<video>`/`<audio>`, or a YouTube/Vimeo embed) via a lazily-downloaded [yt-dlp](https://github.com/yt-dlp/yt-dlp) binary, saved under `media/` in the archive folder. Best-effort — unsupported sites, oversized files, or pages with no media are silently skipped rather than failing the archive. |
+| **Full-page screenshot** | A separate `screenshot.png` capturing the *entire* rendered page top to bottom (not just the viewport-sized thumbnail used in the grids) — for citations, visual records, or just seeing the whole page at a glance without opening the HTML. Shown as an "Open Screenshot" button wherever a snapshot appears. |
+| **Clean article extraction** | Every archive also runs [Readability.js](https://github.com/mozilla/readability) against the page and, when it looks like an article, saves a clean Markdown (`article.md`) and plain-text (`article.txt`) copy alongside it — byline, excerpt, and title included — with ads, nav, and cookie banners stripped out. Shows up as an "Open Article" button next to Open HTML / Open PDF wherever a snapshot appears. |
 | **Timeline** | Every snapshot you've ever taken, newest first, grouped into "Today" / "Yesterday" / dated sections — just like Google Photos. Click a thumbnail to open it full-screen in a lightbox, with Open HTML / Open PDF / Delete right there. |
-| **Recursive archiving** | Optionally crawl and archive an entire site instead of just the page you typed (warns you first — it's much heavier). |
-| **Search** | Live search across every archived URL, including sub-links, from the top bar. |
+| **Archive depth** | Choose how wide each archive run goes: just this page, this page plus its outbound links (the default), or a full recursive crawl of the whole site (warns you first — it's much heavier). See [Archive depth](#archive-depth). |
+| **Full-text search** | Search reaches inside every archived page's actual content, not just its URL — an embedded [SQLite FTS5](https://www.sqlite.org/fts5.html) index (`data/search.db`, self-healing: rebuilt for anything missing from it on startup) is checked alongside the existing URL/domain matching, with a highlighted snippet shown for content-only matches. If the native SQLite binding can't load on your platform, search silently falls back to URL/domain-only rather than breaking. |
+| **AI summaries & tags** *(optional)* | When `ANTHROPIC_API_KEY` is set, every article-like archive gets a 2–3 sentence summary, a handful of topical tags, and named entities via the Claude API, shown right in the viewer. Off by default (it's the one feature that adds real per-archive latency) — nothing changes until you set the env var. See [AI summaries & tags](#ai-summaries--tags). |
+| **Tags (Smart Collections)** | Browse every archive by AI-generated tag from a "Tags" button in the top bar (only appears once at least one archive has a tag). Click a tag to see every snapshot carrying it, across every site. |
+| **URL canonicalization & dedup** | Incoming URLs are normalized (tracking params like `utm_*`/`fbclid` stripped, host lowercased, trailing slash and fragment removed) before archiving, so the same article reached through different tracking links is recognized as the same page. A plain, unconfigured re-request for a URL archived in the last 5 minutes reuses that snapshot instead of re-capturing — an explicit User-Agent, extra wait, or cookies always forces a fresh capture, though. |
+| **Change detection & text diffs** | Re-archiving a URL you've saved before compares its new article text against the last time, flagging "changed" with a line-level +/− count and a "View Changes" button in the viewer that opens a real word-level diff (insertions/deletions highlighted). Only compares article-like main pages, not incidental sub-links. |
 | **Library** | A thumbnail grid of every archived site; click through to a Wayback-Machine-style calendar of every date it was archived. Delete a single day's snapshots from the calendar, or an entire site's history from the grid. |
 | **Export / Import** | Back up everything to a single `.zip` and restore it later — including onto a different OS. |
 | **Dark mode** | Follows your system theme by default; toggle it manually from the top bar. The animated background changes mood with it — soft pastels in light mode, a glowing aurora in dark mode. |
@@ -65,26 +77,15 @@ The UI is a Google Photos-style timeline: every snapshot you've ever taken, grou
 
 ## Roadmap
 
-Planned capture and fidelity improvements — not yet implemented, listed here to track direction:
-
-**Multi-format fallback pipeline** — capture each page in several independent formats at once, so no single format's decay (a broken renderer, a dropped script) takes the whole archive down with it:
-
-- **WARC / WACZ (high fidelity)** — full ISO-standard web archives (via a headless browser or tools like Browsertrix), for interactive replay of the page's dynamic scripts, not just a static snapshot.
-- **Single-file HTML** — a self-contained static HTML file with all assets embedded (via SingleFile), for lightweight, instant offline browsing without unpacking anything.
-- **PDF & visual screenshots** — full-page vector PDFs for printing and citations, plus full-page PNG/WebP snapshots.
-- **Clean article extraction** — Markdown and plain-text extracts (via Readability.js) with ads, paywalls, and cookie banners stripped out.
-- **Media extractor** — automatic download of embedded video/audio via `yt-dlp`.
-
-**Headless JS & cookie session handling** — Playwright/Puppeteer rendering with configurable delay, custom User-Agents, stealth plugins, and cookie/session import, to get past paywalls and anti-bot checks that a plain fetch can't.
-
-**Automated crawl depth** — a single control for how wide an archive run goes: one page, that page's outbound links (depth = 1), or a full recursive crawl of the domain (see [Recursive archiving](#recursive-archiving) for how that currently works).
+Planned improvements — not yet implemented, listed here to track direction. (WARC capture and cookie/User-Agent handling used to be listed here too; both now ship — see the Features table above. WACZ packaging and stealth-plugin anti-bot evasion are deliberately not included: WACZ is just a zipped WARC + index, low-value to add on its own, and stealth plugins are a maintenance-heavy arms race that doesn't fit a simple self-hosted tool well.)
 
 **Search, organization & management:**
 
-- **Full-text & OCR search** — index not just page metadata but full extracted DOM text, PDF content, and image text (via Tesseract OCR) into SQLite/Meilisearch, so search reaches inside the archived content itself, not just titles and URLs.
-- **AI auto-tagging & summarization** — optional local LLM or API integration to auto-generate tags, extract main entities, and summarize article content on ingestion.
-- **Smart collections & deduplication** — organize by tags, folders, or domain rules, with automatic URL canonicalization to avoid re-archiving duplicate content seen across different feeds.
-- **Change detection & visual diffs** — track specific URLs over time (e.g. terms of service or documentation pages) and generate side-by-side visual or text diffs between snapshots.
+Full-text search, AI summaries/tags, tag-based browsing, URL canonicalization/dedup, and text-based change detection all now ship — see the Features table above. What's left from this section:
+
+- **OCR search over images** — extract text baked into images (screenshots-of-text, scanned documents, memes) via Tesseract, so a search can match text that never existed anywhere in the DOM. Deliberately not implemented yet: OCR takes real per-image time (seconds, not milliseconds), and running it synchronously in the current one-shot archive flow would make every archive noticeably slower even when nothing in the works. This is a much better fit once the resource-throttled worker queue below exists, so OCR can run as a background job after the archive itself has already completed.
+- **Folder-based organization** — the shipped Smart Collections covers tag-based browsing; grouping by folder or by domain-matching rule is still just tags-only for now.
+- **Side-by-side visual diffs** — the shipped change detection is text-only (word-level, via the `diff` package); comparing two snapshots' *screenshots* pixel-by-pixel is still open, and is really the same underlying feature as the "side-by-side visual diff viewer" listed under UI below.
 
 **System architecture & storage:**
 
@@ -253,20 +254,59 @@ A couple of things are worth checking in on periodically once TimeCapsule has be
 
 Getting a faithful, self-contained snapshot from a live page takes more than one `page.content()` call, so `lib/archiver.js` does the following for every URL it archives:
 
-1. Loads the page and waits for the network to go idle.
-2. **Scrolls through the full page and waits again.** Lots of sites only fetch images (or trigger other lazy-loaded content) once an element scrolls into view; without this step those images are missing from both the PDF and the saved HTML.
-3. Captures the PDF and thumbnail from that fully-loaded state.
-4. **Inlines every stylesheet, image, and font it saw load as a `data:` URI directly into the HTML**, and rewrites any it couldn't capture (too large, blocked, etc.) to an absolute URL instead of a relative one. This is what makes `page.html` open correctly on its own, later, on another machine, with no dependency on the original site still being up or reachable at the same relative paths.
-5. **Strips `<script>` tags** from the saved HTML. The DOM has already been fully rendered by that point, so scripts add no visual value in a static snapshot — keeping them would only risk them re-executing against a site that's since changed or gone offline (broken widgets, tracking pings, JS errors).
-6. Rewrites `<a href>` links to absolute URLs so they still work (by going back to the live site) when you open an archived page later.
+1. Loads the page and waits for the network to go idle, recording every HTTP request/response pair Chromium makes along the way (used for step 9's WARC file) - with a custom User-Agent and imported cookies already applied, if you set either under [Advanced archive options](#advanced-archive-options).
+2. **Scrolls through the full page and waits again** (longer, if you set an extra wait under Advanced archive options). Lots of sites only fetch images (or trigger other lazy-loaded content) once an element scrolls into view; without this step those images are missing from both the PDF and the saved HTML.
+3. **Runs [Readability.js](https://github.com/mozilla/readability) against a cloned copy of the DOM** and, if the page looks like an article (enough extracted text to be worth it), saves the result as `article.md` and `article.txt` — title, byline, and excerpt included, ads/nav/cookie-banners stripped out. Non-article pages (home pages, search results, etc.) simply don't get these files.
+4. Captures the PDF, a small viewport thumbnail for the UI grids, and a separate full-page `screenshot.png` from that fully-loaded state (the full-page capture is skipped, rather than failing the whole archive, if the page is too tall for Chromium's screenshot buffer).
+5. **Inlines every stylesheet, image, and font it saw load as a `data:` URI directly into the HTML**, and rewrites any it couldn't capture (too large, blocked, etc.) to an absolute URL instead of a relative one. This is what makes `page.html` open correctly on its own, later, on another machine, with no dependency on the original site still being up or reachable at the same relative paths.
+6. **Strips `<script>` tags** from the saved HTML. The DOM has already been fully rendered by that point, so scripts add no visual value in a static snapshot — keeping them would only risk them re-executing against a site that's since changed or gone offline (broken widgets, tracking pings, JS errors).
+7. Rewrites `<a href>` links to absolute URLs so they still work (by going back to the live site) when you open an archived page later.
+8. **Looks for video/audio worth pulling down** — native `<video>`/`<audio>` sources, or a YouTube/Vimeo embed — and hands anything it finds to [yt-dlp](https://github.com/yt-dlp/yt-dlp), saving whatever comes back under `media/`. Same best-effort spirit as the rest of this list: unsupported sites, no media present, oversized files, or a slow/failed download just mean no `media/` folder, not a failed archive.
+9. **Builds `page.warc.gz`** (`lib/warc.js`) from the transactions recorded in step 1 - a `warcinfo` record plus a `response`/`request` record pair per HTTP transaction, gzip-compressed per the WARC spec. Transactions over the same size cap as step 5's inlining (`MAX_INLINE_BYTES`, 8MB) are left out of the WARC entirely, the same as they're left out of the inlined HTML.
+10. **Summarizes and tags the article text** via the Claude API - see [AI summaries & tags](#ai-summaries--tags) - only for article-like pages, and only when `ANTHROPIC_API_KEY` is set.
+11. **Compares the article text against the last archive of this same URL**, if there is one - see [Change detection](#change-detection) - only for the main URL you typed, not sub-links.
 
 Known limitation: assets loaded from Chromium's disk cache (rather than over the network) can occasionally fail to inline; when that happens the archiver falls back to an absolute URL for that one asset rather than failing the whole capture.
 
-### Recursive archiving
+### Archive depth
 
-By default, TimeCapsule only archives links found directly on the page you typed in (up to `MAX_SUBLINKS`, 15). Checking **Recursive** under the address bar archives the whole site instead: it follows same-domain links breadth-first — pages found on those sub-pages get crawled too, and so on — until either there's nothing left to follow or it hits the `MAX_RECURSIVE_PAGES` safety cap (100 pages, including the main one). All of it still lands in the same place: `archived/<domain>/<timestamp>/sub-links/<path>/<timestamp>/`, exactly like non-recursive sub-links do.
+The "How much to archive" control under the address bar picks one of three depths, sent to `POST /api/archive` as `depth`:
 
-The UI warns before you enable it because a full-site crawl is dramatically heavier than a normal archive: many more pages means many more HTML/PDF/thumbnail files (a lot more disk space) and a much longer archive run, since every page still gets the full capture treatment (scroll, wait, inline assets, PDF, screenshot) one at a time. If the site has more pages than the cap allows, the response — and the completion toast — say so rather than silently archiving only part of the site without telling you.
+| Depth | What it archives |
+|---|---|
+| **Just this page** (`page`) | Only the URL you typed. No sub-links at all. |
+| **This page + its links** (`links`, the default) | The URL you typed, plus the same-domain links found directly on it, up to `MAX_SUBLINKS` (15). |
+| **Entire site** (`recursive`) | Follows same-domain links breadth-first — pages found on those sub-pages get crawled too, and so on — until either there's nothing left to follow or it hits the `MAX_RECURSIVE_PAGES` safety cap (100 pages, including the main one). |
+
+Sub-links found at any depth land in the same place: `archived/<domain>/<timestamp>/sub-links/<path>/<timestamp>/`. Whenever a page had more matching links than the depth's cap allowed, the response (and the completion toast) say so as `truncated: true`, rather than silently archiving only part of what was there.
+
+The UI shows an extra warning before you pick **Entire site**, since a full-site crawl is dramatically heavier than the other two depths: many more pages means many more HTML/PDF/thumbnail files (a lot more disk space) and a much longer archive run, since every page still gets the full capture treatment (scroll, wait, extract article, inline assets, PDF, screenshots) one at a time.
+
+### Advanced archive options
+
+The "Advanced options" disclosure under the depth control (and the matching fields on `POST /api/archive`) cover the cases a plain `fetch()` can't handle - a paywall, a login wall, or a site that's slow to render:
+
+| Option | Request field | What it does |
+|---|---|---|
+| Custom User-Agent | `userAgent` (string, ≤300 chars) | Overrides Chromium's default User-Agent string for every request the archive makes - useful for sites that serve different content (or block) based on it. |
+| Extra wait | `extraWaitMs` (number, 0–30000) | Adds to how long TimeCapsule waits for the network to go idle after scrolling, for slow, JS-heavy pages that need more than the default `LAZY_LOAD_WAIT_MS` (8s) to finish rendering. |
+| Cookie import | `cookiesText` (string) | Applies cookies to every page in the archive run before it navigates, so pages behind a login or paywall archive as your session actually sees them. Accepts a Netscape `cookies.txt` export (what most "export cookies" browser extensions produce) or a JSON array of `{name, value, domain, ...}` objects. |
+
+All three are entirely optional and apply to every page in the run (the main URL and every sub-link), not just the first one. A malformed cookies file is rejected up front with a 400 before any browser work starts; an individual cookie missing both `domain` and `url` is skipped rather than failing the whole archive.
+
+### AI summaries & tags
+
+Set the `ANTHROPIC_API_KEY` environment variable before starting TimeCapsule and every article-like archive (the same ones that get `article.md`/`article.txt` - see step 3 below) also gets a 2-3 sentence summary, 3-8 topical tags, and any named people/organizations/places, via the [Claude API](https://claude.com/platform/api) (`claude-opus-5`, `lib/ai-enrich.js`). This is the one optional feature that adds real per-archive latency (an API round trip), so unlike everything else in this list it's off unless you explicitly opt in by setting the key - nothing about a normal archive changes until you do.
+
+Once at least one archive has a tag, a **Tags** button appears in the top bar - it opens a tag cloud (every tag in use, with a count), and clicking a tag lists every archive that carries it, across every site. This is also what the roadmap called "Smart Collections": browsing by tag rather than by domain/date like the Library view does.
+
+If the API call fails for any reason (rate limit, network error, no credit) the archive still completes normally, just without a summary/tags for that one page.
+
+### Change detection
+
+Re-archiving a URL you've already saved compares the new capture's article text against the most recent *previous* archive of that same URL (any age - not the 5-minute dedup window above) and stores how many lines were added/removed. Scoped to the URL you actually typed, not incidental sub-links swept up along the way, and only when both captures look like articles.
+
+When something changed, the viewer shows a small banner (`+N / -M lines`) with a **View Changes** button - it opens a word-level diff (`GET /api/diff?from=<dir>&to=<dir>`, built with the [`diff`](https://github.com/kpdecker/jsdiff) package) with insertions and deletions highlighted. This is a text diff, not a pixel/visual one - comparing two snapshots' screenshots image-by-image is a separate, still-unbuilt roadmap item ("side-by-side visual diff viewer").
 
 ### Directory layout
 
@@ -276,7 +316,13 @@ archived/
     2026-07-25_21-35-56/            <- the URL you typed (https://example.com/blog/post)
       page.html
       page.pdf
+      page.warc.gz                  <- the same page as a WARC/1.1 file
       thumbnail.jpg
+      screenshot.png                <- full-page capture, separate from the small thumbnail above
+      article.md                    <- only present when the page looked like an article
+      article.txt
+      media/                        <- only present when video/audio was found and downloaded
+        my-video-title-abc123.mp4
       metadata.json
       sub-links/
         blog/
@@ -289,8 +335,9 @@ archived/
 ```
 
 - The URL you type always becomes `archived/<domain>/<timestamp>/`, whether or not it has a path.
-- Same-domain links discovered on that page are archived inside that same folder, under `sub-links/<path>/<timestamp>/` (see [Recursive archiving](#recursive-archiving) for how many).
-- The timeline, Search, Library, and calendar views are all derived by walking this directory tree (`lib/history.js`) — there's no separate database.
+- Same-domain links discovered on that page are archived inside that same folder, under `sub-links/<path>/<timestamp>/` (see [Archive depth](#archive-depth) for how many).
+- The timeline, Library, and calendar views are all derived purely by walking this directory tree (`lib/history.js`) — `archived/` alone is a complete, self-describing copy of everything TimeCapsule knows, no database required to make sense of it.
+- The one exception is full-text search: `data/search.db` (a SQLite file, outside `archived/` on purpose - see [Export and import](#export-and-import)) indexes each page's text so search can look inside content, not just URLs. It's disposable - delete it and TimeCapsule rebuilds it from `archived/` the next time it starts.
 
 ### Export and import
 
@@ -299,7 +346,7 @@ Everything TimeCapsule knows is just files under `archived/` — folder and file
 - **Export** (top bar, or `GET /api/export`) downloads a `.zip` of the entire `archived/` directory.
 - **Import** (top bar, or `POST /api/import` with the zip as a `multipart/form-data` field named `archive`) extracts that zip into `archived/` on whatever machine you run it on. Existing archives already on that machine are kept — importing merges rather than replaces, so it's also safe to combine two machines' archives into one.
 
-To move to a different OS: click Export on the old machine, copy the `.zip` over by whatever means (USB drive, cloud storage, `scp`, etc.), [install](#installing) TimeCapsule on the new machine, start it, and click Import.
+To move to a different OS: click Export on the old machine, copy the `.zip` over by whatever means (USB drive, cloud storage, `scp`, etc.), [install](#installing) TimeCapsule on the new machine, start it, and click Import. `data/search.db` deliberately isn't part of the export - it's just an index, not a source of truth, and TimeCapsule backfills it for any imported archive it doesn't recognize the next time it starts (see [Directory layout](#directory-layout)).
 
 ### Dark mode
 
@@ -333,12 +380,22 @@ All of this — what gets printed, what gets written to `traffic.log`, and in wh
 | Setting | Default | Where | Purpose |
 |---|---|---|---|
 | `PORT` (env var) | `3000` | shell environment | Port the server listens on |
-| `MAX_SUBLINKS` | `15` | `lib/archiver.js` | Non-recursive archiving: max links archived from the one page you typed |
-| `MAX_RECURSIVE_PAGES` | `100` | `lib/archiver.js` | Recursive archiving: max total pages crawled per site, including the main page |
+| `ANTHROPIC_API_KEY` (env var) | unset | shell environment | Turns on [AI summaries & tags](#ai-summaries--tags). Archiving works identically without it, just without summaries/tags. |
+| `MAX_SUBLINKS` | `15` | `lib/archiver.js` | "This page + its links" depth: max links archived from the one page you typed |
+| `MAX_RECURSIVE_PAGES` | `100` | `lib/archiver.js` | "Entire site" depth: max total pages crawled per site, including the main page |
+| Media items per page | `2` | `lib/media.js` (`MAX_MEDIA_ITEMS`) | Max video/audio files downloaded per archived page |
+| Media file size cap | `250M` | `lib/media.js` (`MAX_MEDIA_FILESIZE`) | yt-dlp skips anything larger than this rather than downloading it |
+| `MAX_INLINE_BYTES` | `8MB` | `lib/archiver.js` | Max size of a single resource inlined into `page.html` *and* included in `page.warc.gz` |
+| Custom User-Agent length cap | `300` chars | `server.js` (`MAX_USER_AGENT_LENGTH`) | Longest `userAgent` value `POST /api/archive` accepts |
+| Extra wait cap | `30000` ms | `server.js` (`MAX_EXTRA_WAIT_MS`) | Longest `extraWaitMs` value `POST /api/archive` accepts |
+| Cookies text size cap | `200KB` | `server.js` (`MAX_COOKIES_TEXT_LENGTH`) | Largest `cookiesText` payload `POST /api/archive` accepts |
+| Dedup window | `5` minutes | `server.js` (`DEDUP_WINDOW_MS`) | How recently a plain, unconfigured re-request for the same URL must have been archived to be served from that snapshot instead of re-captured |
 
 ## Requirements
 
 - [Node.js](https://nodejs.org/) 18 or newer.
+- No Python and nothing else to install for the media extractor: the first time TimeCapsule finds video/audio to download, it fetches a standalone [yt-dlp](https://github.com/yt-dlp/yt-dlp) binary for your OS into `bin/` (like Puppeteer does for Chromium) and reuses it after that. Needs outbound internet access the first time; every archive before that point works normally, just without media downloads.
+- Full-text search uses [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3), a native module that ships prebuilt binaries for common platforms via `npm install` - no compiler needed on those. If it can't load on yours (an unusual OS/arch with no prebuilt binary available), TimeCapsule logs a warning and keeps running with URL/domain-only search rather than failing to start.
 - On Linux, Chromium (used via Puppeteer) needs a few system libraries. If `npm start` fails to launch the browser, install them, e.g. on Debian/Ubuntu:
   ```
   sudo apt-get install -y ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 \
