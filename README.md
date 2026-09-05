@@ -35,6 +35,7 @@ The UI is a Google Photos-style timeline: every snapshot you've ever taken, grou
 
 - [Screenshots](#screenshots)
 - [Features](#features)
+- [Roadmap](#roadmap)
 - [Installing](#installing)
 - [Running on a Workstation](#running-on-a-workstation)
 - [Managing the Service](#managing-the-service)
@@ -61,6 +62,49 @@ The UI is a Google Photos-style timeline: every snapshot you've ever taken, grou
 | **Export / Import** | Back up everything to a single `.zip` and restore it later — including onto a different OS. |
 | **Dark mode** | Follows your system theme by default; toggle it manually from the top bar. The animated background changes mood with it — soft pastels in light mode, a glowing aurora in dark mode. |
 | **Logging** | Prints progress to the terminal as pages are archived, and appends every archive request (URL + requester IP) to `traffic.log`. |
+
+## Roadmap
+
+Planned capture and fidelity improvements — not yet implemented, listed here to track direction:
+
+**Multi-format fallback pipeline** — capture each page in several independent formats at once, so no single format's decay (a broken renderer, a dropped script) takes the whole archive down with it:
+
+- **WARC / WACZ (high fidelity)** — full ISO-standard web archives (via a headless browser or tools like Browsertrix), for interactive replay of the page's dynamic scripts, not just a static snapshot.
+- **Single-file HTML** — a self-contained static HTML file with all assets embedded (via SingleFile), for lightweight, instant offline browsing without unpacking anything.
+- **PDF & visual screenshots** — full-page vector PDFs for printing and citations, plus full-page PNG/WebP snapshots.
+- **Clean article extraction** — Markdown and plain-text extracts (via Readability.js) with ads, paywalls, and cookie banners stripped out.
+- **Media extractor** — automatic download of embedded video/audio via `yt-dlp`.
+
+**Headless JS & cookie session handling** — Playwright/Puppeteer rendering with configurable delay, custom User-Agents, stealth plugins, and cookie/session import, to get past paywalls and anti-bot checks that a plain fetch can't.
+
+**Automated crawl depth** — a single control for how wide an archive run goes: one page, that page's outbound links (depth = 1), or a full recursive crawl of the domain (see [Recursive archiving](#recursive-archiving) for how that currently works).
+
+**Search, organization & management:**
+
+- **Full-text & OCR search** — index not just page metadata but full extracted DOM text, PDF content, and image text (via Tesseract OCR) into SQLite/Meilisearch, so search reaches inside the archived content itself, not just titles and URLs.
+- **AI auto-tagging & summarization** — optional local LLM or API integration to auto-generate tags, extract main entities, and summarize article content on ingestion.
+- **Smart collections & deduplication** — organize by tags, folders, or domain rules, with automatic URL canonicalization to avoid re-archiving duplicate content seen across different feeds.
+- **Change detection & visual diffs** — track specific URLs over time (e.g. terms of service or documentation pages) and generate side-by-side visual or text diffs between snapshots.
+
+**System architecture & storage:**
+
+- **Resource-throttled workers** — a queue-based worker architecture (e.g. Redis + Celery, or Go workers) with rate limiting, concurrency caps, and CPU/RAM throttles, so archiving doesn't crash smaller homelab devices like a Raspberry Pi.
+- **Storage provider flexibility** — save archived data to local disk, S3-compatible object storage (MinIO, Cloudflare R2, AWS S3), or SMB/NFS network shares, instead of only the local filesystem.
+- **Public archive mirroring (optional)** — a toggle to auto-submit pages to external public archives (Internet Archive's Save Page Now, Archive.today) as an extra backup layer.
+- **Multi-user access control** — role-based permissions allowing public read-only collections while restricting who can trigger archives or change administrative settings.
+
+**UI:**
+
+- **Interactive timeline calendar** — map captures onto a GitHub-style activity heatmap or calendar view, with dots or color codes for HTTP status or whether the content changed that day.
+- **Side-by-side visual diff viewer** — pick two capture dates for a single URL and view a split-screen or sliding-curtain diff, highlighting DOM changes or visual pixel shifts.
+- **Format switcher replay bar** — a top navigation banner on replayed pages for toggling instantly between execution modes: WARC Replay | SingleFile HTML | PDF | Reader View | Screenshot.
+
+**Dashboard & operational UI:**
+
+- **Live job queue & worker monitor** — a real-time dashboard showing running headless-browser tasks, CPU/RAM utilization per job, queued URLs, and instant retry/cancel buttons.
+- **Quick-add command palette (Cmd+K)** — a global modal, accessible anywhere in the app, to quickly submit URLs, assign tags, or jump directly to archived domains.
+- **Storage breakdowns & cleanup tools** — a pie chart breaking down disk usage by format (WARCs vs. screenshots vs. video files), paired with a "prune rules" interface (e.g. delete screenshots older than 90 days for specific domains).
+- **Broken asset & link checker** — a sub-view highlighting archived pages that failed to fetch sub-resources (missing CSS/fonts, blocked scripts), with options to re-fetch individual assets.
 
 ## Installing
 
