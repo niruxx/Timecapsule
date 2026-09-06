@@ -7,6 +7,12 @@
 
 The UI is a Google Photos-style timeline: every snapshot you've ever taken, grouped by day, in one scrollable grid — click any thumbnail to open it full-screen.
 
+> **Built with AI assistance.** Most of this codebase — the capture pipeline, the UI, this README — was written with Claude (Anthropic's AI coding assistant) working alongside a human who directed the design, tested every feature against a real running server, and decided what shipped. If you're reading the source: expect the usual shape of AI-assisted code (consistent patterns, thorough comments explaining *why*, occasional over-explaining) rather than a hand-crafted, decade-old style. It's been exercised in practice, not just written and forgotten, but review it yourself before trusting it with anything sensitive, same as you would any other self-hosted tool.
+
+## Why AI-assisted development
+
+Features like the bot-check hand-off, Wayback link auto-import, and cancellable background jobs with live progress aren't things ArchiveBox or a `wget --mirror` script does. AI assistance is what made building this specific, non-standard feature set practical for a one-person project.
+
 ## Screenshots
 
 <table>
@@ -33,6 +39,7 @@ The UI is a Google Photos-style timeline: every snapshot you've ever taken, grou
 
 ## Contents
 
+- [Why AI-assisted development](#why-ai-assisted-development)
 - [Screenshots](#screenshots)
 - [Features](#features)
 - [Roadmap](#roadmap)
