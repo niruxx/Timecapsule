@@ -40,6 +40,7 @@ const exportBtn = document.getElementById('export-btn');
 const importBtn = document.getElementById('import-btn');
 const importFile = document.getElementById('import-file');
 const themeToggle = document.getElementById('theme-toggle');
+const waybackBtn = document.getElementById('wayback-btn');
 
 const dialogOverlay = document.getElementById('dialog-overlay');
 const dialogTitle = document.getElementById('dialog-title');
@@ -274,6 +275,7 @@ function renderTimelineCard(entry, i) {
 
 loadTimeline();
 refreshTagsButton();
+applySettings();
 
 /* ============================================================
    Viewer (lightbox)
@@ -487,8 +489,17 @@ async function stopActiveJob() {
 stopBtn.addEventListener('click', stopActiveJob);
 progressStopBtn.addEventListener('click', stopActiveJob);
 
+// Mirrors lib/wayback.js's WAYBACK_URL_RE - purely cosmetic here (just decides whether to show
+// the glow below), the server does its own authoritative check when the form is actually submitted.
+const WAYBACK_URL_RE = /^(?:https?:\/\/)?web\.archive\.org\/web\/(\d{1,14})[a-z_]*\/(https?:\/\/.+)$/i;
+
+input.addEventListener('input', () => {
+  form.classList.toggle('archive-bar--wayback', WAYBACK_URL_RE.test(input.value.trim()));
+});
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
+  form.classList.remove('archive-bar--wayback');
   const url = input.value.trim();
   if (!url) return;
 
@@ -529,6 +540,7 @@ form.addEventListener('submit', async (e) => {
 
     input.value = '';
     activeJobId = data.jobId;
+    if (data.wayback) showToast('Recognized a Wayback Machine link — importing that snapshot…');
     setProgress(0, 'Starting…');
 
     const es = new EventSource(`/api/archive/${activeJobId}/events`);
@@ -544,6 +556,8 @@ form.addEventListener('submit', async (e) => {
         } else {
           setProgress(parseInt(progressPercentEl.textContent, 10) || 0, 'Verified — continuing…');
         }
+      } else if (event.type === 'queued') {
+        setProgress(0, event.position ? `Queued (#${event.position}) — waiting for a free slot…` : 'Queued — waiting for a free slot…');
       }
     });
 
@@ -1064,3 +1078,137 @@ importFile.addEventListener('change', async () => {
     appProgress.hidden = true;
   }
 });
+
+/* ============================================================
+   Wayback Machine import
+   ============================================================ */
+
+waybackBtn.addEventListener('click', () => {
+  openDialog();
+  showWaybackImport();
+});
+
+function showWaybackImport() {
+  dialogTitle.textContent = 'Import from Wayback Machine';
+  dialogBack.hidden = true;
+  dialogBack.onclick = null;
+  dialogBody.innerHTML = `
+    <form id="wayback-form" class="wayback-form">
+      <input type="text" id="wayback-url-input" placeholder="Paste a URL to look up" autocomplete="off" required>
+      <button type="submit" class="btn-filled">Find snapshots</button>
+    </form>
+    <div id="wayback-results"></div>
+  `;
+
+  const form = dialogBody.querySelector('#wayback-form');
+  const urlInput = dialogBody.querySelector('#wayback-url-input');
+  const results = dialogBody.querySelector('#wayback-results');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = urlInput.value.trim();
+    if (!url) return;
+
+    results.innerHTML = '<div class="dialog-loading">Looking up snapshots…</div>';
+    try {
+      const res = await fetch(`/api/wayback/snapshots?url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        results.innerHTML = `<div class="dialog-empty">${escapeHtml(data.error || 'Lookup failed')}</div>`;
+        return;
+      }
+      renderWaybackSnapshots(data.url, data.snapshots, results);
+    } catch (err) {
+      results.innerHTML = `<div class="dialog-empty">${escapeHtml(err.message)}</div>`;
+    }
+  });
+}
+
+function renderWaybackSnapshots(url, snapshots, container) {
+  if (!snapshots.length) {
+    container.innerHTML = '<div class="dialog-empty">No snapshots found for that URL.</div>';
+    return;
+  }
+
+  container.innerHTML = `<div class="wayback-list">${snapshots.map((s) => `
+    <button type="button" class="wayback-row" data-timestamp="${s.timestamp}">
+      <span>${escapeHtml(new Date(s.capturedAt).toLocaleString())}</span>
+      <span class="wayback-row-action">Import</span>
+    </button>
+  `).join('')}</div>`;
+  wireRipples(container);
+
+  container.querySelectorAll('.wayback-row').forEach((row) => {
+    row.addEventListener('click', () => runWaybackImport(url, row.dataset.timestamp, row));
+  });
+}
+
+async function runWaybackImport(url, timestamp, rowEl) {
+  rowEl.disabled = true;
+  rowEl.querySelector('.wayback-row-action').textContent = 'Importing…';
+
+  try {
+    const res = await fetch('/api/wayback/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, timestamp }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Import failed');
+
+    await new Promise((resolve, reject) => {
+      const es = new EventSource(`/api/archive/${data.jobId}/events`);
+      es.addEventListener('progress', (evt) => {
+        const event = JSON.parse(evt.data);
+        if (event.type === 'stage') rowEl.querySelector('.wayback-row-action').textContent = event.label;
+        else if (event.type === 'queued') rowEl.querySelector('.wayback-row-action').textContent = 'Queued…';
+      });
+      es.addEventListener('done', () => { es.close(); resolve(); });
+      es.addEventListener('error', (evt) => {
+        es.close();
+        const message = evt.data ? (JSON.parse(evt.data).error || 'Import failed') : 'Import failed';
+        reject(new Error(message));
+      });
+      es.addEventListener('stopped', () => { es.close(); reject(new Error('Import stopped')); });
+    });
+
+    showToast('Imported from the Wayback Machine');
+    closeDialog();
+    loadTimeline({ skeleton: false });
+    refreshTagsButton();
+  } catch (err) {
+    showToast(err.message || 'Import failed', 'error');
+    rowEl.disabled = false;
+    rowEl.querySelector('.wayback-row-action').textContent = 'Import';
+  }
+}
+
+/* ============================================================
+   Settings
+   ============================================================ */
+
+// Whether the homepage feed shows at all is a server-operator choice (config.js's
+// SHOW_TIMELINE_FEED), not a per-visitor toggle - there's no website control for it, just this
+// read of the server's config on load.
+async function applySettings() {
+  try {
+    const res = await fetch('/api/settings');
+    const settings = await res.json();
+
+    timelineEl.hidden = settings.showTimeline === false;
+
+    if (settings.enableAnimatedBackground === false) {
+      document.querySelectorAll('.bg-blob').forEach((el) => { el.hidden = true; });
+    }
+
+    if (settings.enableMediaDownloads === false) {
+      saveMediaInput.checked = false;
+      saveMediaInput.disabled = true;
+      const label = saveMediaInput.closest('label');
+      const small = label && label.querySelector('small');
+      if (small) small.textContent = '(disabled by the server administrator)';
+    }
+  } catch {
+    // couldn't load settings - leave everything at its default (visible/enabled) rather than guessing
+  }
+}

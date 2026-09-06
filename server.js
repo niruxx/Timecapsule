@@ -4,7 +4,7 @@ const express = require('express');
 const puppeteer = require('puppeteer');
 const multer = require('multer');
 const AdmZip = require('adm-zip');
-const { archiveUrl } = require('./lib/archiver');
+const { archiveUrl, importWaybackSnapshot } = require('./lib/archiver');
 const {
   listSites, listTimeline, listSiteHistory, searchArchives, deleteSite, deleteMainDirs,
   listAllArchives, listTags, listByTag, findRecentArchive,
@@ -14,9 +14,19 @@ const { parseCookies } = require('./lib/cookies');
 const { createJob, getJob, finishJob } = require('./lib/jobs');
 const { indexPage, getIndexedDirs } = require('./lib/search-index');
 const { canonicalizeUrl } = require('./lib/canonicalize');
+const {
+  listSnapshots, fetchSnapshotHtml, parseWaybackTimestamp, parseWaybackUrl, resolveWaybackTimestamp,
+} = require('./lib/wayback');
+const { Semaphore } = require('./lib/semaphore');
+const config = require('./config');
 const { diffWords } = require('diff');
 
 const DEDUP_WINDOW_MS = 5 * 60 * 1000;
+
+// Caps how many archive/import jobs actually run their Puppeteer work at once - shared across
+// both endpoints below, since both consume the same resource (a headless-Chromium page). Extra
+// requests queue rather than being rejected; tune via config.js, not from the website.
+const archiveSemaphore = new Semaphore(config.MAX_CONCURRENT_ARCHIVES);
 
 const PORT = process.env.PORT || 3000;
 const ARCHIVE_DIR = path.join(__dirname, 'archived');
@@ -76,10 +86,80 @@ async function cleanupJobDir(job) {
   await fs.promises.rm(job.mainDir, { recursive: true, force: true }).catch(() => {});
 }
 
+// Runs a Wayback Machine import as a background job - shared by POST /api/wayback/import and the
+// auto-detect path in POST /api/archive (see WAYBACK_URL_RE below), since both need the exact same
+// queue/stop/cleanup handling as a live archive job. `timestampHint` may be a partial timestamp
+// (resolved to the nearest real snapshot) or the full 14-digit one from a pasted Wayback link.
+function runWaybackImportJob(job, target, timestampHint, ip) {
+  (async () => {
+    if (archiveSemaphore.isFull) {
+      job.status = 'queued';
+      job.emitter.emit('progress', { type: 'queued', position: archiveSemaphore.queueLength + 1 });
+    }
+    await archiveSemaphore.acquire();
+    try {
+      if (job.abortController.signal.aborted) throw new Error('Import stopped by user.');
+      job.status = 'running';
+
+      const timestamp = await resolveWaybackTimestamp(target, timestampHint);
+      const html = await fetchSnapshotHtml(target, timestamp);
+      const capturedAt = parseWaybackTimestamp(timestamp).toISOString();
+      const browser = await getBrowser();
+      const main = await importWaybackSnapshot(browser, target, html, capturedAt, ARCHIVE_DIR, {
+        job,
+        onProgress: (event) => job.emitter.emit('progress', event),
+      });
+
+      const result = { main, sublinks: [], truncated: false };
+      job.status = 'done';
+      job.result = result;
+      job.emitter.emit('done', result);
+      log(`Wayback import completed: ${target} @ ${timestamp} for ${ip}`);
+    } catch (err) {
+      if (job.abortController.signal.aborted) {
+        await cleanupJobDir(job);
+        job.status = 'stopped';
+        job.emitter.emit('stopped');
+        log(`Wayback import stopped: ${target} for ${ip}`);
+      } else {
+        job.status = 'error';
+        job.error = err.message;
+        job.emitter.emit('error', err.message);
+        log(`Wayback import failed: ${target} for ${ip} - ${err.message}`);
+      }
+    } finally {
+      archiveSemaphore.release();
+      finishJob(job);
+    }
+  })();
+}
+
 app.post('/api/archive', async (req, res) => {
   const { url, depth, userAgent, extraWaitMs, cookiesText, saveImages, saveMedia } = req.body || {};
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'A url is required.' });
+  }
+
+  // A URL copied straight out of the Wayback Machine (web.archive.org/web/<timestamp>/<url>)
+  // gets imported instead of archived live - otherwise this would dutifully screenshot Wayback's
+  // own replay page, toolbar and all, rather than doing what pasting that link actually means.
+  // Checked against the raw input, before any of the URL parsing/canonicalizing below touches it.
+  const waybackMatch = parseWaybackUrl(url);
+  if (waybackMatch) {
+    let target;
+    try {
+      target = normalizeUrl(waybackMatch.originalUrl);
+    } catch {
+      return res.status(400).json({ error: 'That does not look like a valid URL.' });
+    }
+
+    const ip = getClientIp(req);
+    log(`Wayback link detected in archive request: ${target} @ ${waybackMatch.timestamp} from ${ip}`);
+
+    const job = createJob();
+    res.json({ jobId: job.id, wayback: true });
+    runWaybackImportJob(job, target, waybackMatch.timestamp, ip);
+    return;
   }
 
   let target;
@@ -121,7 +201,7 @@ app.post('/api/archive', async (req, res) => {
   }
 
   const selectedSaveImages = saveImages !== false;
-  const selectedSaveMedia = saveMedia === true;
+  const selectedSaveMedia = saveMedia === true && config.ENABLE_MEDIA_DOWNLOADS;
 
   const ip = getClientIp(req);
   log(`Archive requested: ${target} (depth: ${selectedDepth}) from ${ip}`);
@@ -149,7 +229,14 @@ app.post('/api/archive', async (req, res) => {
   res.json({ jobId: job.id });
 
   (async () => {
+    if (archiveSemaphore.isFull) {
+      job.status = 'queued';
+      job.emitter.emit('progress', { type: 'queued', position: archiveSemaphore.queueLength + 1 });
+    }
+    await archiveSemaphore.acquire();
     try {
+      if (job.abortController.signal.aborted) throw new Error('Archive stopped by user.');
+      job.status = 'running';
       const browser = await getBrowser();
       const result = await archiveUrl(browser, target, ARCHIVE_DIR, {
         depth: selectedDepth,
@@ -189,6 +276,7 @@ app.post('/api/archive', async (req, res) => {
         log(`Archive failed: ${target} for ${ip} - ${err.message}`);
       }
     } finally {
+      archiveSemaphore.release();
       finishJob(job);
     }
   })();
@@ -211,6 +299,7 @@ app.get('/api/archive/:jobId/events', (req, res) => {
   if (job.status === 'error') { send('error', { error: job.error }); return res.end(); }
   if (job.status === 'stopped') { send('stopped', {}); return res.end(); }
   if (job.status === 'awaiting-verification' && job.verificationInfo) send('progress', { type: 'verification', ...job.verificationInfo });
+  if (job.status === 'queued') send('progress', { type: 'queued' });
 
   const onProgress = (event) => send('progress', event);
   const onDone = (result) => { send('done', result); res.end(); };
@@ -246,6 +335,64 @@ app.post('/api/archive/:jobId/stop', async (req, res) => {
     // already closing/closed - fine
   }
   res.json({ ok: true });
+});
+
+app.get('/api/wayback/snapshots', async (req, res) => {
+  const { url } = req.query;
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'A url is required.' });
+  }
+
+  let target;
+  try {
+    target = normalizeUrl(url);
+  } catch {
+    return res.status(400).json({ error: 'That does not look like a valid URL.' });
+  }
+
+  try {
+    const snapshots = await listSnapshots(target);
+    res.json({ url: target, snapshots });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Imports one existing Wayback Machine snapshot, reusing the exact same background-job/SSE/stop
+// machinery as a live archive (see POST /api/archive above) since this also does real Puppeteer
+// work - it just renders already-fetched HTML instead of navigating live.
+app.post('/api/wayback/import', async (req, res) => {
+  const { url, timestamp } = req.body || {};
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'A url is required.' });
+  }
+  if (!timestamp || !/^\d{14}$/.test(timestamp)) {
+    return res.status(400).json({ error: 'A valid Wayback snapshot timestamp is required.' });
+  }
+
+  let target;
+  try {
+    target = normalizeUrl(url);
+  } catch {
+    return res.status(400).json({ error: 'That does not look like a valid URL.' });
+  }
+
+  const ip = getClientIp(req);
+  log(`Wayback import requested: ${target} @ ${timestamp} from ${ip}`);
+
+  const job = createJob();
+  res.json({ jobId: job.id });
+  runWaybackImportJob(job, target, timestamp, ip);
+});
+
+// Read-only reflection of config.js's website-facing knobs - there's no PUT here on purpose,
+// since these are server-operator settings (see config.js), not something a visitor can change.
+app.get('/api/settings', (req, res) => {
+  res.json({
+    showTimeline: config.SHOW_TIMELINE_FEED,
+    enableAnimatedBackground: config.ENABLE_ANIMATED_BACKGROUND,
+    enableMediaDownloads: config.ENABLE_MEDIA_DOWNLOADS,
+  });
 });
 
 app.get('/api/sites', async (req, res) => {
