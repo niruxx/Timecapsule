@@ -44,6 +44,7 @@ The UI is a Google Photos-style timeline: every snapshot you've ever taken, grou
   - [How pages are captured](#how-pages-are-captured)
   - [Archive depth](#archive-depth)
   - [Advanced archive options](#advanced-archive-options)
+  - [Progress, cancelling, and human verification](#progress-cancelling-and-human-verification)
   - [AI summaries & tags](#ai-summaries--tags)
   - [Change detection](#change-detection)
   - [Directory layout](#directory-layout)
@@ -59,7 +60,9 @@ The UI is a Google Photos-style timeline: every snapshot you've ever taken, grou
 |---|---|
 | **Archive** | Paste a URL, get back a self-contained single-file HTML snapshot (`page.html`, every stylesheet/image/font inlined as `data:` URIs) + a full-page vector PDF + a thumbnail, saved to disk. |
 | **WARC capture** | Every archive also saves `page.warc.gz` — a real [WARC/1.1](https://iipc.github.io/warc-specifications/) file built from the actual HTTP request/response pairs Chromium made while loading the page, parseable by warcio/pywb/ReplayWeb.page. Capped at the same per-resource size limit as the HTML inlining, so very large resources appear as headers without a full replayable body — see [How pages are captured](#how-pages-are-captured). |
-| **Custom User-Agent, extra wait & cookie import** | "Advanced options" under the address bar lets you override the browser's User-Agent, add extra time after the page loads (for slow JS-heavy sites), and import cookies (Netscape `cookies.txt` or JSON) so paywalled or logged-in pages archive as you'd actually see them. |
+| **Custom User-Agent, extra wait, cookie import & save toggles** | "Advanced options" under the address bar lets you override the browser's User-Agent, add extra time after the page loads (for slow JS-heavy sites), import cookies (Netscape `cookies.txt` or JSON) so paywalled or logged-in pages archive as you'd actually see them, and toggle whether images get saved into the archive (vs. linked back to the original) and whether video/audio download runs at all. |
+| **Live progress & cancel** | Archiving runs as a background job with a small circular progress indicator (bottom-right) showing which capture stage is running, plus a Stop button next to Archive that hard-cancels the job and deletes whatever partial files it had already written. |
+| **Human verification hand-off** | If a site throws up a bot-check (Cloudflare, hCaptcha, reCAPTCHA, Turnstile) while archiving, TimeCapsule opens a second, visible browser window on your desktop so you can solve it yourself — once cleared, the resulting session cookies are copied back into the headless capture and archiving continues automatically. |
 | **Media extractor** | Downloads any video/audio TimeCapsule can find on the page (native `<video>`/`<audio>`, or a YouTube/Vimeo embed) via a lazily-downloaded [yt-dlp](https://github.com/yt-dlp/yt-dlp) binary, saved under `media/` in the archive folder. Best-effort — unsupported sites, oversized files, or pages with no media are silently skipped rather than failing the archive. |
 | **Full-page screenshot** | A separate `screenshot.png` capturing the *entire* rendered page top to bottom (not just the viewport-sized thumbnail used in the grids) — for citations, visual records, or just seeing the whole page at a glance without opening the HTML. Shown as an "Open Screenshot" button wherever a snapshot appears. |
 | **Clean article extraction** | Every archive also runs [Readability.js](https://github.com/mozilla/readability) against the page and, when it looks like an article, saves a clean Markdown (`article.md`) and plain-text (`article.txt`) copy alongside it — byline, excerpt, and title included — with ads, nav, and cookie banners stripped out. Shows up as an "Open Article" button next to Open HTML / Open PDF wherever a snapshot appears. |
@@ -93,6 +96,7 @@ Full-text search, AI summaries/tags, tag-based browsing, URL canonicalization/de
 - **Storage provider flexibility** — save archived data to local disk, S3-compatible object storage (MinIO, Cloudflare R2, AWS S3), or SMB/NFS network shares, instead of only the local filesystem.
 - **Public archive mirroring (optional)** — a toggle to auto-submit pages to external public archives (Internet Archive's Save Page Now, Archive.today) as an extra backup layer.
 - **Multi-user access control** — role-based permissions allowing public read-only collections while restricting who can trigger archives or change administrative settings.
+- **Wayback Machine / archive.org import** — pull existing snapshots for a URL from the Internet Archive's [CDX](https://archive.org/help/wayback_api.php) and availability APIs and store them alongside your own captures, so pages you never archived yourself are still viewable in the same library.
 
 **UI:**
 
@@ -102,7 +106,7 @@ Full-text search, AI summaries/tags, tag-based browsing, URL canonicalization/de
 
 **Dashboard & operational UI:**
 
-- **Live job queue & worker monitor** — a real-time dashboard showing running headless-browser tasks, CPU/RAM utilization per job, queued URLs, and instant retry/cancel buttons.
+- **Live job queue & worker monitor** — per-job progress and a cancel button now ship (see Features above) for the single archive you just kicked off; still open is a dashboard view across *multiple concurrent* jobs — a queue list, CPU/RAM utilization per job, and retry.
 - **Quick-add command palette (Cmd+K)** — a global modal, accessible anywhere in the app, to quickly submit URLs, assign tags, or jump directly to archived domains.
 - **Storage breakdowns & cleanup tools** — a pie chart breaking down disk usage by format (WARCs vs. screenshots vs. video files), paired with a "prune rules" interface (e.g. delete screenshots older than 90 days for specific domains).
 - **Broken asset & link checker** — a sub-view highlighting archived pages that failed to fetch sub-resources (missing CSS/fonts, blocked scripts), with options to re-fetch individual assets.
@@ -254,14 +258,14 @@ A couple of things are worth checking in on periodically once TimeCapsule has be
 
 Getting a faithful, self-contained snapshot from a live page takes more than one `page.content()` call, so `lib/archiver.js` does the following for every URL it archives:
 
-1. Loads the page and waits for the network to go idle, recording every HTTP request/response pair Chromium makes along the way (used for step 9's WARC file) - with a custom User-Agent and imported cookies already applied, if you set either under [Advanced archive options](#advanced-archive-options).
+1. Loads the page and waits for the network to go idle, recording every HTTP request/response pair Chromium makes along the way (used for step 9's WARC file) - with a custom User-Agent and imported cookies already applied, if you set either under [Advanced archive options](#advanced-archive-options). If the page comes back as a bot-check (Cloudflare, hCaptcha, reCAPTCHA, Turnstile) instead of real content, a second, visible browser window opens on your desktop so you can solve it yourself - the resulting cookies are copied back into the capture and it re-navigates automatically. Only checked for the main URL you typed, not sub-links, since the resolved session cookies carry over to them anyway.
 2. **Scrolls through the full page and waits again** (longer, if you set an extra wait under Advanced archive options). Lots of sites only fetch images (or trigger other lazy-loaded content) once an element scrolls into view; without this step those images are missing from both the PDF and the saved HTML.
 3. **Runs [Readability.js](https://github.com/mozilla/readability) against a cloned copy of the DOM** and, if the page looks like an article (enough extracted text to be worth it), saves the result as `article.md` and `article.txt` — title, byline, and excerpt included, ads/nav/cookie-banners stripped out. Non-article pages (home pages, search results, etc.) simply don't get these files.
 4. Captures the PDF, a small viewport thumbnail for the UI grids, and a separate full-page `screenshot.png` from that fully-loaded state (the full-page capture is skipped, rather than failing the whole archive, if the page is too tall for Chromium's screenshot buffer).
-5. **Inlines every stylesheet, image, and font it saw load as a `data:` URI directly into the HTML**, and rewrites any it couldn't capture (too large, blocked, etc.) to an absolute URL instead of a relative one. This is what makes `page.html` open correctly on its own, later, on another machine, with no dependency on the original site still being up or reachable at the same relative paths.
+5. **Inlines every stylesheet, image, and font it saw load as a `data:` URI directly into the HTML**, and rewrites any it couldn't capture (too large, blocked, etc.) to an absolute URL instead of a relative one. This is what makes `page.html` open correctly on its own, later, on another machine, with no dependency on the original site still being up or reachable at the same relative paths. Images specifically can be excluded from this via the "Save images" toggle under [Advanced archive options](#advanced-archive-options) - stylesheets and fonts always inline, since skipping those would break the page's layout entirely.
 6. **Strips `<script>` tags** from the saved HTML. The DOM has already been fully rendered by that point, so scripts add no visual value in a static snapshot — keeping them would only risk them re-executing against a site that's since changed or gone offline (broken widgets, tracking pings, JS errors).
 7. Rewrites `<a href>` links to absolute URLs so they still work (by going back to the live site) when you open an archived page later.
-8. **Looks for video/audio worth pulling down** — native `<video>`/`<audio>` sources, or a YouTube/Vimeo embed — and hands anything it finds to [yt-dlp](https://github.com/yt-dlp/yt-dlp), saving whatever comes back under `media/`. Same best-effort spirit as the rest of this list: unsupported sites, no media present, oversized files, or a slow/failed download just mean no `media/` folder, not a failed archive.
+8. **Looks for video/audio worth pulling down** — native `<video>`/`<audio>` sources, or a YouTube/Vimeo embed — and hands anything it finds to [yt-dlp](https://github.com/yt-dlp/yt-dlp), saving whatever comes back under `media/`. Off by default; enable the "Download video/audio" toggle under [Advanced archive options](#advanced-archive-options) to turn it on for a given archive run. Same best-effort spirit as the rest of this list: unsupported sites, no media present, oversized files, or a slow/failed download just mean no `media/` folder, not a failed archive.
 9. **Builds `page.warc.gz`** (`lib/warc.js`) from the transactions recorded in step 1 - a `warcinfo` record plus a `response`/`request` record pair per HTTP transaction, gzip-compressed per the WARC spec. Transactions over the same size cap as step 5's inlining (`MAX_INLINE_BYTES`, 8MB) are left out of the WARC entirely, the same as they're left out of the inlined HTML.
 10. **Summarizes and tags the article text** via the Claude API - see [AI summaries & tags](#ai-summaries--tags) - only for article-like pages, and only when `ANTHROPIC_API_KEY` is set.
 11. **Compares the article text against the last archive of this same URL**, if there is one - see [Change detection](#change-detection) - only for the main URL you typed, not sub-links.
@@ -291,8 +295,16 @@ The "Advanced options" disclosure under the depth control (and the matching fiel
 | Custom User-Agent | `userAgent` (string, ≤300 chars) | Overrides Chromium's default User-Agent string for every request the archive makes - useful for sites that serve different content (or block) based on it. |
 | Extra wait | `extraWaitMs` (number, 0–30000) | Adds to how long TimeCapsule waits for the network to go idle after scrolling, for slow, JS-heavy pages that need more than the default `LAZY_LOAD_WAIT_MS` (8s) to finish rendering. |
 | Cookie import | `cookiesText` (string) | Applies cookies to every page in the archive run before it navigates, so pages behind a login or paywall archive as your session actually sees them. Accepts a Netscape `cookies.txt` export (what most "export cookies" browser extensions produce) or a JSON array of `{name, value, domain, ...}` objects. |
+| Save images | `saveImages` (boolean, default `true`) | When off, images are left as links back to the original site instead of being inlined as `data:` URIs - a smaller archive, at the cost of those images disappearing if the source site ever goes offline. |
+| Download video/audio | `saveMedia` (boolean, default `false`) | Turns on the yt-dlp media extractor (step 8 above) for this archive run. Off by default since it's the slowest optional step. |
 
-All three are entirely optional and apply to every page in the run (the main URL and every sub-link), not just the first one. A malformed cookies file is rejected up front with a 400 before any browser work starts; an individual cookie missing both `domain` and `url` is skipped rather than failing the whole archive.
+All five are entirely optional and apply to every page in the run (the main URL and every sub-link), not just the first one. A malformed cookies file is rejected up front with a 400 before any browser work starts; an individual cookie missing both `domain` and `url` is skipped rather than failing the whole archive.
+
+### Progress, cancelling, and human verification
+
+`POST /api/archive` returns immediately with `{ jobId }` rather than blocking until the whole archive finishes - the actual capture runs in the background (`lib/jobs.js` tracks it), and the UI subscribes to `GET /api/archive/:jobId/events` (Server-Sent Events) to drive the circular progress indicator in the bottom-right corner. `POST /api/archive/:jobId/stop` hard-cancels a running job: it closes whatever browser page (or human-verification window) is currently in flight, which aborts Chromium/yt-dlp mid-operation, then deletes the partial archive directory that job had already written to disk.
+
+If a site's bot-check trips during the main page's capture, the job's status becomes `awaiting-verification` and a second, visible Chrome window opens - solve the check there and archiving picks back up on its own (see step 1 above). This only does anything useful because TimeCapsule runs on your own desktop with a real display; it's a no-op on a truly headless server.
 
 ### AI summaries & tags
 
@@ -390,6 +402,8 @@ All of this — what gets printed, what gets written to `traffic.log`, and in wh
 | Extra wait cap | `30000` ms | `server.js` (`MAX_EXTRA_WAIT_MS`) | Longest `extraWaitMs` value `POST /api/archive` accepts |
 | Cookies text size cap | `200KB` | `server.js` (`MAX_COOKIES_TEXT_LENGTH`) | Largest `cookiesText` payload `POST /api/archive` accepts |
 | Dedup window | `5` minutes | `server.js` (`DEDUP_WINDOW_MS`) | How recently a plain, unconfigured re-request for the same URL must have been archived to be served from that snapshot instead of re-captured |
+| Human verification timeout | `10` minutes | `lib/archiver.js` (`VERIFY_TIMEOUT_MS`) | How long the visible hand-off browser window waits for you to clear a bot-check before giving up and failing the archive |
+| Finished job retention | `10` minutes | `lib/jobs.js` (`JOB_TTL_MS`) | How long a completed/errored/stopped job's status stays queryable via `GET /api/archive/:jobId/events` before it's forgotten |
 
 ## Requirements
 

@@ -5,6 +5,7 @@
 const form = document.getElementById('archive-form');
 const input = document.getElementById('url-input');
 const btn = document.getElementById('archive-btn');
+const stopBtn = document.getElementById('stop-btn');
 const depthInputs = document.querySelectorAll('input[name="depth"]');
 const recursiveWarning = document.getElementById('recursive-warning');
 const appProgress = document.getElementById('app-progress');
@@ -15,6 +16,15 @@ const cookiesBtn = document.getElementById('cookies-btn');
 const cookiesFile = document.getElementById('cookies-file');
 const cookiesFilename = document.getElementById('cookies-filename');
 const cookiesClear = document.getElementById('cookies-clear');
+const saveImagesInput = document.getElementById('save-images-input');
+const saveMediaInput = document.getElementById('save-media-input');
+
+const progressWidget = document.getElementById('progress-widget');
+const progressRingFg = document.getElementById('progress-ring-fg');
+const progressPercentEl = document.getElementById('progress-percent');
+const progressLabelEl = document.getElementById('progress-label');
+const progressStopBtn = document.getElementById('progress-stop-btn');
+const PROGRESS_RING_CIRCUMFERENCE = 2 * Math.PI * 22;
 
 const toast = document.getElementById('toast');
 const toastIcon = document.getElementById('toast-icon');
@@ -418,6 +428,65 @@ cookiesClear.addEventListener('click', () => {
   cookiesClear.hidden = true;
 });
 
+let activeJobId = null;
+let activeEventSource = null;
+
+function setProgress(percent, label, verifying) {
+  progressWidget.hidden = false;
+  progressWidget.classList.toggle('progress-widget--verify', Boolean(verifying));
+  const clamped = Math.max(0, Math.min(100, percent));
+  progressRingFg.style.strokeDashoffset = String(PROGRESS_RING_CIRCUMFERENCE * (1 - clamped / 100));
+  progressPercentEl.textContent = `${Math.round(clamped)}%`;
+  progressLabelEl.textContent = label;
+}
+
+function resetArchiveUi() {
+  activeJobId = null;
+  if (activeEventSource) {
+    activeEventSource.close();
+    activeEventSource = null;
+  }
+  btn.disabled = false;
+  btn.classList.remove('loading');
+  appProgress.hidden = true;
+  stopBtn.hidden = true;
+  stopBtn.disabled = false;
+  progressStopBtn.disabled = false;
+  progressWidget.hidden = true;
+  progressWidget.classList.remove('progress-widget--verify');
+}
+
+function onArchiveDone(data) {
+  const savedSublinks = data.sublinks.filter((s) => !s.error).length;
+  const capNote = data.truncated ? ' — stopped at the page limit' : '';
+  if (data.deduped) {
+    showToast('Already archived moments ago — reused that snapshot instead');
+  } else {
+    showToast(
+      savedSublinks
+        ? `Archived — ${savedSublinks} sub-link${savedSublinks === 1 ? '' : 's'} saved${capNote}`
+        : 'Archive completed'
+    );
+  }
+  loadTimeline({ skeleton: false });
+  refreshTagsButton();
+}
+
+async function stopActiveJob() {
+  if (!activeJobId) return;
+  stopBtn.disabled = true;
+  progressStopBtn.disabled = true;
+  setProgress(parseInt(progressPercentEl.textContent, 10) || 0, 'Stopping…');
+  try {
+    await fetch(`/api/archive/${activeJobId}/stop`, { method: 'POST' });
+  } catch {
+    // the SSE stream will still tell us how it ended, or resetArchiveUi() runs via 'error' below
+  }
+}
+
+stopBtn.addEventListener('click', stopActiveJob);
+progressStopBtn.addEventListener('click', stopActiveJob);
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const url = input.value.trim();
@@ -426,44 +495,76 @@ form.addEventListener('submit', async (e) => {
   const depth = selectedDepth();
   const userAgent = userAgentInput.value.trim() || undefined;
   const extraWaitMs = extraWaitInput.value ? Number(extraWaitInput.value) * 1000 : undefined;
+  const saveImages = saveImagesInput.checked;
+  const saveMedia = saveMediaInput.checked;
 
   btn.disabled = true;
   btn.classList.add('loading');
   appProgress.hidden = false;
+  stopBtn.hidden = false;
 
   try {
     const res = await fetch('/api/archive', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, depth, userAgent, extraWaitMs, cookiesText: cookiesText || undefined })
+      body: JSON.stringify({
+        url, depth, userAgent, extraWaitMs, saveImages, saveMedia,
+        cookiesText: cookiesText || undefined,
+      })
     });
     const data = await res.json();
 
     if (!res.ok) {
       showToast(data.error || 'Archive failed', 'error');
+      resetArchiveUi();
       return;
     }
 
-    const savedSublinks = data.sublinks.filter((s) => !s.error).length;
-    const capNote = data.truncated ? ' — stopped at the page limit' : '';
     if (data.deduped) {
-      showToast('Already archived moments ago — reused that snapshot instead');
-    } else {
-      showToast(
-        savedSublinks
-          ? `Archived — ${savedSublinks} sub-link${savedSublinks === 1 ? '' : 's'} saved${capNote}`
-          : 'Archive completed'
-      );
+      onArchiveDone(data);
+      input.value = '';
+      resetArchiveUi();
+      return;
     }
+
     input.value = '';
-    loadTimeline({ skeleton: false });
-    refreshTagsButton();
+    activeJobId = data.jobId;
+    setProgress(0, 'Starting…');
+
+    const es = new EventSource(`/api/archive/${activeJobId}/events`);
+    activeEventSource = es;
+
+    es.addEventListener('progress', (evt) => {
+      const event = JSON.parse(evt.data);
+      if (event.type === 'stage') {
+        setProgress(event.percent, event.label);
+      } else if (event.type === 'verification') {
+        if (event.status === 'opened') {
+          setProgress(parseInt(progressPercentEl.textContent, 10) || 0, 'A browser window opened — solve the check there to continue', true);
+        } else {
+          setProgress(parseInt(progressPercentEl.textContent, 10) || 0, 'Verified — continuing…');
+        }
+      }
+    });
+
+    es.addEventListener('done', (evt) => {
+      onArchiveDone(JSON.parse(evt.data));
+      resetArchiveUi();
+    });
+
+    es.addEventListener('error', (evt) => {
+      const message = evt.data ? (JSON.parse(evt.data).error || 'Archive failed') : 'Archive failed';
+      showToast(message, 'error');
+      resetArchiveUi();
+    });
+
+    es.addEventListener('stopped', () => {
+      showToast('Archive stopped');
+      resetArchiveUi();
+    });
   } catch (err) {
     showToast(err.message || 'Archive failed', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.classList.remove('loading');
-    appProgress.hidden = true;
+    resetArchiveUi();
   }
 });
 

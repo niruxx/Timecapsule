@@ -11,6 +11,7 @@ const {
 } = require('./lib/history');
 const { log, logTraffic } = require('./lib/logger');
 const { parseCookies } = require('./lib/cookies');
+const { createJob, getJob, finishJob } = require('./lib/jobs');
 const { indexPage, getIndexedDirs } = require('./lib/search-index');
 const { canonicalizeUrl } = require('./lib/canonicalize');
 const { diffWords } = require('diff');
@@ -61,8 +62,22 @@ const MAX_USER_AGENT_LENGTH = 300;
 const MAX_EXTRA_WAIT_MS = 30000;
 const MAX_COOKIES_TEXT_LENGTH = 200 * 1024;
 
+// A dir string is only ever used to join onto ARCHIVE_DIR, so this is the one check standing
+// between a query param and reading a file outside the archive - it must resolve inside ARCHIVE_DIR.
+function isWithinArchiveDir(relDir) {
+  if (typeof relDir !== 'string' || !relDir || path.isAbsolute(relDir)) return false;
+  const resolved = path.resolve(ARCHIVE_DIR, relDir);
+  const rel = path.relative(ARCHIVE_DIR, resolved);
+  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+async function cleanupJobDir(job) {
+  if (!job.mainDir) return;
+  await fs.promises.rm(job.mainDir, { recursive: true, force: true }).catch(() => {});
+}
+
 app.post('/api/archive', async (req, res) => {
-  const { url, depth, userAgent, extraWaitMs, cookiesText } = req.body || {};
+  const { url, depth, userAgent, extraWaitMs, cookiesText, saveImages, saveMedia } = req.body || {};
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'A url is required.' });
   }
@@ -105,6 +120,9 @@ app.post('/api/archive', async (req, res) => {
     }
   }
 
+  const selectedSaveImages = saveImages !== false;
+  const selectedSaveMedia = saveMedia === true;
+
   const ip = getClientIp(req);
   log(`Archive requested: ${target} (depth: ${selectedDepth}) from ${ip}`);
   logTraffic(target, ip);
@@ -124,27 +142,110 @@ app.post('/api/archive', async (req, res) => {
     }
   }
 
+  // Archiving runs as a background job rather than blocking this request, so the client can show
+  // live progress (and a stop button) via the SSE stream at GET /api/archive/:jobId/events instead
+  // of just staring at a spinner until the whole thing finishes.
+  const job = createJob();
+  res.json({ jobId: job.id });
+
+  (async () => {
+    try {
+      const browser = await getBrowser();
+      const result = await archiveUrl(browser, target, ARCHIVE_DIR, {
+        depth: selectedDepth,
+        userAgent: selectedUserAgent,
+        extraWaitMs: selectedExtraWaitMs,
+        cookies,
+        saveImages: selectedSaveImages,
+        saveMedia: selectedSaveMedia,
+        job,
+        onProgress: (event) => {
+          if (event.type === 'page') {
+            log(`  [${ip}] archived ${event.url}`);
+          } else if (event.type === 'error') {
+            log(`  [${ip}] failed ${event.url}: ${event.error}`);
+          } else if (event.type === 'verification') {
+            job.status = event.status === 'opened' ? 'awaiting-verification' : 'running';
+            job.verificationInfo = event;
+            if (event.status === 'opened') log(`  [${ip}] human verification required for ${target}`);
+          }
+          job.emitter.emit('progress', event);
+        },
+      });
+      job.status = 'done';
+      job.result = result;
+      job.emitter.emit('done', result);
+      log(`Archive completed: ${target} (${result.sublinks.length} sub-link(s)) for ${ip}`);
+    } catch (err) {
+      if (job.abortController.signal.aborted) {
+        await cleanupJobDir(job);
+        job.status = 'stopped';
+        job.emitter.emit('stopped');
+        log(`Archive stopped: ${target} for ${ip}`);
+      } else {
+        job.status = 'error';
+        job.error = err.message;
+        job.emitter.emit('error', err.message);
+        log(`Archive failed: ${target} for ${ip} - ${err.message}`);
+      }
+    } finally {
+      finishJob(job);
+    }
+  })();
+});
+
+app.get('/api/archive/:jobId/events', (req, res) => {
+  const job = getJob(req.params.jobId);
+  if (!job) return res.status(404).end();
+
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  res.flushHeaders();
+
+  const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
+  if (job.status === 'done') { send('done', job.result); return res.end(); }
+  if (job.status === 'error') { send('error', { error: job.error }); return res.end(); }
+  if (job.status === 'stopped') { send('stopped', {}); return res.end(); }
+  if (job.status === 'awaiting-verification' && job.verificationInfo) send('progress', { type: 'verification', ...job.verificationInfo });
+
+  const onProgress = (event) => send('progress', event);
+  const onDone = (result) => { send('done', result); res.end(); };
+  const onError = (message) => { send('error', { error: message }); res.end(); };
+  const onStopped = () => { send('stopped', {}); res.end(); };
+
+  job.emitter.on('progress', onProgress);
+  job.emitter.on('done', onDone);
+  job.emitter.on('error', onError);
+  job.emitter.on('stopped', onStopped);
+
+  req.on('close', () => {
+    job.emitter.off('progress', onProgress);
+    job.emitter.off('done', onDone);
+    job.emitter.off('error', onError);
+    job.emitter.off('stopped', onStopped);
+  });
+});
+
+app.post('/api/archive/:jobId/stop', async (req, res) => {
+  const job = getJob(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found.' });
+
+  job.abortController.abort();
   try {
-    const browser = await getBrowser();
-    const result = await archiveUrl(browser, target, ARCHIVE_DIR, {
-      depth: selectedDepth,
-      userAgent: selectedUserAgent,
-      extraWaitMs: selectedExtraWaitMs,
-      cookies,
-      onProgress: (event) => {
-        if (event.type === 'page') {
-          log(`  [${ip}] archived ${event.url}`);
-        } else if (event.type === 'error') {
-          log(`  [${ip}] failed ${event.url}: ${event.error}`);
-        }
-      },
-    });
-    log(`Archive completed: ${target} (${result.sublinks.length} sub-link(s)) for ${ip}`);
-    res.json(result);
-  } catch (err) {
-    log(`Archive failed: ${target} for ${ip} - ${err.message}`);
-    res.status(500).json({ error: err.message });
+    if (job.verifyBrowser) await job.verifyBrowser.close();
+  } catch {
+    // already closing/closed - fine
   }
+  try {
+    if (job.page) await job.page.close();
+  } catch {
+    // already closing/closed - fine
+  }
+  res.json({ ok: true });
 });
 
 app.get('/api/sites', async (req, res) => {
@@ -196,15 +297,6 @@ app.get('/api/tags/:tag', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// A dir string is only ever used to join onto ARCHIVE_DIR, so this is the one check standing
-// between a query param and reading a file outside the archive - it must resolve inside ARCHIVE_DIR.
-function isWithinArchiveDir(relDir) {
-  if (typeof relDir !== 'string' || !relDir || path.isAbsolute(relDir)) return false;
-  const resolved = path.resolve(ARCHIVE_DIR, relDir);
-  const rel = path.relative(ARCHIVE_DIR, resolved);
-  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
-}
 
 app.get('/api/diff', async (req, res) => {
   const { from, to } = req.query;

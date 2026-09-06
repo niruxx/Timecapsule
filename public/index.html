@@ -88,6 +88,7 @@
         <span class="btn-label">Archive</span>
         <span class="btn-spinner" aria-hidden="true"></span>
       </button>
+      <button id="stop-btn" type="button" class="btn-tonal btn-stop" hidden>Stop</button>
     </form>
 
     <div class="depth-control">
@@ -132,6 +133,14 @@
           </div>
           <input type="file" id="cookies-file" accept=".txt,.json" hidden>
         </div>
+        <label class="advanced-field advanced-checkbox">
+          <input type="checkbox" id="save-images-input" checked>
+          <span>Save images in the archive <small>(uncheck to link back to the original site instead — smaller archive)</small></span>
+        </label>
+        <label class="advanced-field advanced-checkbox">
+          <input type="checkbox" id="save-media-input">
+          <span>Download video/audio found on the page <small>(slower — uses yt-dlp)</small></span>
+        </label>
       </div>
     </details>
   </section>
@@ -139,7 +148,7 @@
   <section id="timeline" class="timeline" aria-live="polite"></section>
 </main>
 
-<footer class="version-tag">v0.1a</footer>
+<footer class="version-tag">v0.2a</footer>
 
 <div id="toast" class="snackbar" role="status" aria-live="polite">
   <span id="toast-icon" class="snackbar-icon" aria-hidden="true">✅</span>
@@ -195,6 +204,18 @@
   </div>
   <div class="viewer-stage">
     <img id="viewer-img" alt="" >
+  </div>
+</div>
+
+<div id="progress-widget" class="progress-widget" hidden>
+  <svg class="progress-ring" width="52" height="52" viewBox="0 0 52 52">
+    <circle class="progress-ring-bg" cx="26" cy="26" r="22"></circle>
+    <circle id="progress-ring-fg" class="progress-ring-fg" cx="26" cy="26" r="22"></circle>
+  </svg>
+  <span id="progress-percent" class="progress-percent">0%</span>
+  <div class="progress-tooltip">
+    <div id="progress-label" class="progress-label">Starting…</div>
+    <button type="button" id="progress-stop-btn" class="progress-stop-link">Stop</button>
   </div>
 </div>
 

@@ -485,6 +485,16 @@ button, input { font-family: inherit; }
 
 .btn-danger:hover { background: var(--danger-container); filter: none; }
 
+.btn-stop {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  flex-shrink: 0;
+}
+
+.btn-stop:hover { background: var(--danger-container); filter: none; }
+.btn-stop[hidden] { display: none; }
+
 /* Ripple */
 .ripple {
   position: absolute;
@@ -751,6 +761,110 @@ button, input { font-family: inherit; }
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(var(--primary-rgb), .18);
 }
+
+.advanced-checkbox {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.advanced-checkbox input[type="checkbox"] {
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* ============================================================
+   Archive progress widget (bottom-right, floating)
+   ============================================================ */
+
+.progress-widget {
+  position: fixed;
+  right: 24px;
+  bottom: 36px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  cursor: default;
+  animation: pop-in .3s var(--ease-emphasized);
+}
+
+.progress-widget[hidden] { display: none; }
+
+.progress-ring { position: absolute; inset: 0; transform: rotate(-90deg); }
+
+.progress-ring-bg,
+.progress-ring-fg {
+  fill: none;
+  stroke-width: 4;
+}
+
+.progress-ring-bg { stroke: var(--border); }
+
+.progress-ring-fg {
+  stroke: var(--primary);
+  stroke-linecap: round;
+  stroke-dasharray: 138.2;
+  stroke-dashoffset: 138.2;
+  transition: stroke-dashoffset .3s var(--ease-standard), stroke .3s var(--ease-standard);
+}
+
+.progress-widget--verify .progress-ring-fg { stroke: var(--warning-text, #b8860b); }
+
+.progress-percent {
+  font-size: .7rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.progress-tooltip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 260px;
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  box-shadow: var(--e2);
+  font-size: .78rem;
+  color: var(--text-secondary);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity .18s var(--ease-standard), transform .18s var(--ease-standard);
+}
+
+.progress-widget:hover .progress-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.progress-label { flex: 1; line-height: 1.35; }
+
+.progress-stop-link {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--danger);
+  font-size: .78rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.progress-stop-link:hover { text-decoration: underline; }
 
 .cookie-upload-row { display: flex; align-items: center; gap: 10px; }
 
