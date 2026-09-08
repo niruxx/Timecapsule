@@ -7,7 +7,12 @@
 
 The UI is a Google Photos-style timeline: every snapshot you've ever taken, grouped by day, in one scrollable grid — click any thumbnail to open it full-screen.
 
-> **Built with AI assistance.** Most of this codebase — the capture pipeline, the UI, this README — was written with Claude (Anthropic's AI coding assistant) working alongside a human who directed the design, tested every feature against a real running server, and decided what shipped. If you're reading the source: expect the usual shape of AI-assisted code (consistent patterns, thorough comments explaining *why*, occasional over-explaining) rather than a hand-crafted, decade-old style. It's been exercised in practice, not just written and forgotten, but review it yourself before trusting it with anything sensitive, same as you would any other self-hosted tool.
+## AI usage disclaimer
+
+> [!NOTE]
+> Parts of Timecapsule's — code, documentation, and this README included — were
+> written with the help of AI coding assistants. Everything is reviewed before
+> it ships, but if you spot something that looks off, please open an issue.
 
 ## Why AI-assisted development
 
