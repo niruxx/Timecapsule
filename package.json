@@ -13,7 +13,7 @@
     "better-sqlite3": "^13.0.3",
     "diff": "^9.0.0",
     "express": "^4.19.2",
-    "multer": "^2.2.0",
+    "multer": "^2.3.0",
     "puppeteer": "^22.15.0",
     "turndown": "^7.2.4",
     "warcio": "^2.4.12",
