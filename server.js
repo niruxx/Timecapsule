@@ -28,7 +28,7 @@ const DEDUP_WINDOW_MS = 5 * 60 * 1000;
 // requests queue rather than being rejected; tune via config.js, not from the website.
 const archiveSemaphore = new Semaphore(config.MAX_CONCURRENT_ARCHIVES);
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || config.PORT;
 const ARCHIVE_DIR = path.join(__dirname, 'archived');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024 * 1024 } });
 

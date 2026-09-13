@@ -401,6 +401,7 @@ This, and everything else in `config.js`, is deliberately a server file rather t
 ```js
 // config.js
 module.exports = {
+  PORT: 3000,                          // port the server listens on (the PORT env var still wins if set)
   MAX_CONCURRENT_ARCHIVES: 2,          // simultaneous archive/import jobs
   MAX_CONCURRENT_MEDIA_DOWNLOADS: 2,   // simultaneous yt-dlp downloads within one page's media pass
   SHOW_TIMELINE_FEED: true,            // show the "Today"/"Yesterday" feed on the homepage
@@ -442,7 +443,7 @@ All of this — what gets printed, what gets written to `traffic.log`, and in wh
 
 | Setting | Default | Where | Purpose |
 |---|---|---|---|
-| `PORT` (env var) | `3000` | shell environment | Port the server listens on |
+| `PORT` | `3000` | `config.js`, or the `PORT` env var | Port the server listens on - the env var wins if both are set |
 | `ANTHROPIC_API_KEY` (env var) | unset | shell environment | Turns on [AI summaries & tags](#ai-summaries--tags). Archiving works identically without it, just without summaries/tags. |
 | `MAX_SUBLINKS` | `15` | `lib/archiver.js` | "This page + its links" depth: max links archived from the one page you typed |
 | `MAX_RECURSIVE_PAGES` | `100` | `lib/archiver.js` | "Entire site" depth: max total pages crawled per site, including the main page |

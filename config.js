@@ -3,6 +3,11 @@
 // hardware can handle), not something to expose as a per-archive request option. Edit this file
 // and restart the server to change them.
 module.exports = {
+  // Port the server listens on. The PORT environment variable still overrides this when set
+  // (existing systemd/pm2/Docker setups that already export PORT keep working unchanged) - this
+  // is just a way to change the default without having to set an env var at all.
+  PORT: 3000,
+
   // How many archive/import jobs run their actual Puppeteer work at once (each one is a real
   // headless-Chromium page load). Requests beyond this limit still queue up and start as soon as
   // a slot frees, rather than being rejected - see lib/semaphore.js. Raise this on a beefier
