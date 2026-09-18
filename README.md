@@ -143,6 +143,33 @@ npm approve-scripts puppeteer
 npm install
 ```
 
+### Linux: install and update scripts
+
+On Linux, two scripts in the project root do the setup and upkeep for you. Run them as a regular user (not root) that has `sudo`:
+
+```
+git clone <this-repository-url>
+cd TimeCapsule
+bash install.sh
+```
+
+`install.sh` walks through, and skips anything already done:
+
+1. Installs `git`, `curl` and the system libraries headless Chromium needs (apt, dnf/yum or pacman; the renamed `t64` packages on Ubuntu 24.04 are handled), and Node.js 18+ from NodeSource if you don't have it.
+2. Runs `npm ci`, then starts Chromium once to prove it works. If it can't, it prints the missing libraries (or the Ubuntu 23.10+ AppArmor sandbox restriction) instead of leaving you to find out on your first archive.
+3. Asks for a port and offers to create a **systemd service** — a system-wide one that starts at boot (recommended), or a user service that needs no root (with optional "linger" so it starts at boot too). It's enabled and started, then checked over HTTP.
+
+It's safe to re-run, and `--yes` accepts every default for unattended use. Useful options: `--port N`, `--service system|user|none`, `--skip-deps`, `--no-start`, and `--dry-run` to print everything it would do (including the exact unit file) without changing anything. `bash install.sh --help` lists them all.
+
+To get onto the latest commits later:
+
+```
+bash update.sh          # fetch, update, reinstall dependencies only if they changed, restart the service
+bash update.sh --check  # just report whether an update is available
+```
+
+`update.sh` never touches your data — `archived/`, `data/`, `bin/` and `traffic.log` aren't tracked by git, and the script never runs `git clean` or a hard reset against them. If you've edited a tracked file (typically `config.js`), your edits are set aside and re-applied on top of the new version. If they can't be merged cleanly, the whole update is rolled back and nothing changes — you're never left with half an update or conflict markers in a file the server loads. A failed `npm install` is rolled back the same way, and the service is restarted only if it was running before.
+
 ## Running on a Workstation
 
 For personal, local-only use — nothing else needs to reach it:
@@ -183,7 +210,7 @@ npm install
 pm2 restart timecapsule   # or just re-run `npm start` if you run it in the foreground
 ```
 
-`npm install` re-checks Puppeteer's bundled Chromium and only re-downloads it if the required version changed.
+`npm install` re-checks Puppeteer's bundled Chromium and only re-downloads it if the required version changed. On Linux, `bash update.sh` does all of this for you and handles the systemd service too — see [Linux: install and update scripts](#linux-install-and-update-scripts).
 
 **Backing up:** everything TimeCapsule knows lives under `archived/`. Click Export in the top bar (or hit `GET /api/export`) to download it as a single `.zip` — see [Export and import](#export-and-import) for the full picture, including moving to a different OS entirely.
 
@@ -216,7 +243,7 @@ TimeCapsule is a plain Node/Express process — any host that can run a long-liv
    [Install]
    WantedBy=multi-user.target
    ```
-   Then `sudo systemctl enable --now timecapsule`.
+   Then `sudo systemctl enable --now timecapsule`. (`bash install.sh` can write and enable this unit for you — see [Linux: install and update scripts](#linux-install-and-update-scripts).)
 3. **Put a reverse proxy in front of it** (nginx, Caddy, etc.) to handle TLS and your domain name, proxying to `http://127.0.0.1:3000`. Caddy example:
    ```
    archive.yourdomain.com {
