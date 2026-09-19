@@ -29,6 +29,8 @@ PORT_CHOICE=""
 PM=""             # apt | dnf | yum | pacman | "" (unknown)
 SUDO_READY=0
 BROWSER_OK=1
+BROWSER_DOWNLOAD_FAILED=0
+NPM_LOG=""
 PROJECT_DIR=""
 NODE_BIN=""
 RUN_USER=""
@@ -369,18 +371,101 @@ ensure_node() {
 # Application dependencies
 # ---------------------------------------------------------------------------------------------
 
+# An interrupted Chromium download (Ctrl+C, dropped connection, full disk) leaves a version folder in
+# Puppeteer's cache with no browser inside it, and Puppeteer then refuses to reuse it: "The browser
+# folder ... exists but the executable ... is missing". That fails every later `npm ci` too, so
+# clear out any such husk first. It's only a cache of a re-downloadable file, never user data.
+clean_stale_browser_cache() {
+  local cache="${PUPPETEER_CACHE_DIR:-$HOME/.cache/puppeteer}" dir
+  [[ -d "$cache" ]] || return 0
+  for dir in "$cache"/chrome/* "$cache"/chrome-headless-shell/*; do
+    [[ -d "$dir" && "$dir" == "$cache"/* ]] || continue
+    if [[ -z "$(find "$dir" -maxdepth 2 -type f -perm /111 \( -name chrome -o -name chrome-headless-shell \) -print -quit 2>/dev/null)" ]]; then
+      warn "Removing an incomplete Chromium download left by an earlier attempt: $dir"
+      run rm -rf "$dir"
+    fi
+  done
+}
+
+# Downloads the Chromium build this version of Puppeteer expects, by running the same script npm
+# would have run during install - but on its own, so its errors aren't buried in npm's output.
+download_browser() {
+  info "Downloading Chromium for Puppeteer (~150 MB)..."
+  clean_stale_browser_cache
+  if (( DRY_RUN )); then info "[dry-run] node node_modules/puppeteer/install.mjs"; return 0; fi
+
+  local status=0
+  # env -u: if PUPPETEER_SKIP_DOWNLOAD is set in your shell it would silently turn this into a no-op.
+  if [[ -f node_modules/puppeteer/install.mjs ]]; then
+    env -u PUPPETEER_SKIP_DOWNLOAD node node_modules/puppeteer/install.mjs || status=$?
+  else
+    env -u PUPPETEER_SKIP_DOWNLOAD npx --no-install puppeteer browsers install chrome || status=$?
+  fi
+
+  if (( status )); then
+    BROWSER_DOWNLOAD_FAILED=1
+    warn "The Chromium download failed (the error is just above)."
+    warn "Usual causes: no route to Google's browser download host (storage.googleapis.com), a proxy that"
+    warn "needs configuring (HTTPS_PROXY), or a full disk (check with: df -h ~). Once that's sorted, re-run"
+    warn "this installer - every step that's already done is skipped."
+    return 1
+  fi
+  ok "Chromium downloaded"
+}
+
+# True if the last logged npm run failed inside Puppeteer's browser download rather than in
+# dependency resolution.
+npm_failed_on_browser_download() {
+  [[ -n "$NPM_LOG" && -f "$NPM_LOG" ]] && grep -qE 'Failed to set up|PUPPETEER_SKIP_DOWNLOAD|puppeteer/lib/esm/puppeteer/node/install' "$NPM_LOG"
+}
+
+# Runs npm while keeping a copy of its output in $NPM_LOG (still shown live) so a failure can be
+# classified. pipefail makes the pipeline report npm's status, not tee's.
+run_npm_logged() {
+  if (( DRY_RUN )); then run "$@"; return 0; fi
+  NPM_LOG="$(mktemp)"
+  "$@" 2>&1 | tee "$NPM_LOG"
+}
+
 install_npm_deps() {
   step "Installing TimeCapsule's dependencies"
   info "First install downloads a copy of Chromium for Puppeteer (~150 MB) - this can take a few minutes."
-  if [[ -f package-lock.json ]]; then
-    run npm ci --no-audit --no-fund || {
-      warn "npm ci failed (lockfile out of sync?) - retrying with npm install"
-      run npm install --no-audit --no-fund
-    }
-  else
-    run npm install --no-audit --no-fund
+
+  clean_stale_browser_cache
+
+  local -a cmd=(npm ci --no-audit --no-fund)
+  [[ -f package-lock.json ]] || cmd=(npm install --no-audit --no-fund)
+
+  if run_npm_logged "${cmd[@]}"; then
+    if (( ! DRY_RUN )); then ok "Dependencies installed"; fi
+    rm -f "$NPM_LOG"
+    return 0
   fi
-  if (( ! DRY_RUN )); then ok "Dependencies installed"; fi
+
+  # Work out what actually went wrong instead of blindly retrying the same thing. When it was only
+  # Puppeteer's Chromium download, install everything else without it, then fetch the browser as its
+  # own step where a failure is reported properly.
+  if npm_failed_on_browser_download; then
+    warn "Puppeteer couldn't set up Chromium during the install - installing the rest without it first."
+    if run env PUPPETEER_SKIP_DOWNLOAD=1 "${cmd[@]}"; then
+      ok "Dependencies installed"
+      rm -f "$NPM_LOG"
+      download_browser || true   # already reported; verify_browser gives the final verdict
+      return 0
+    fi
+  elif [[ "${cmd[1]}" == ci ]]; then
+    warn "npm ci failed (is package-lock.json out of sync with package.json?) - trying npm install instead."
+    if run env PUPPETEER_SKIP_DOWNLOAD=1 npm install --no-audit --no-fund; then
+      ok "Dependencies installed"
+      rm -f "$NPM_LOG"
+      download_browser || true
+      return 0
+    fi
+  fi
+
+  rm -f "$NPM_LOG"
+  die "npm couldn't install the dependencies (its error is above). Usual causes: no access to registry.npmjs.org,
+    a full disk, or an out-of-date Node/npm. Fix that and re-run - it's safe to run again."
 }
 
 verify_browser() {
@@ -390,9 +475,17 @@ verify_browser() {
   local chrome_path output
   chrome_path="$(node -e "process.stdout.write(require('puppeteer').executablePath())" 2>/dev/null || true)"
   if [[ -z "$chrome_path" || ! -x "$chrome_path" ]]; then
-    warn "Puppeteer's Chromium wasn't downloaded (an install-script guard, or a blocked download?) - fetching it now."
-    npx --yes puppeteer browsers install chrome || warn "Couldn't download Chromium. Try:  npx puppeteer browsers install chrome"
-    chrome_path="$(node -e "process.stdout.write(require('puppeteer').executablePath())" 2>/dev/null || true)"
+    if (( ! BROWSER_DOWNLOAD_FAILED )); then
+      warn "Puppeteer's Chromium isn't there (an install-script guard, or a blocked download?) - fetching it now."
+      download_browser || true
+      chrome_path="$(node -e "process.stdout.write(require('puppeteer').executablePath())" 2>/dev/null || true)"
+    fi
+  fi
+  if [[ -z "$chrome_path" || ! -x "$chrome_path" ]]; then
+    BROWSER_OK=0
+    warn "Chromium isn't installed, so there's nothing to test. TimeCapsule can't archive anything until it is."
+    warn "Fix the download problem reported above and re-run this installer."
+    return 0
   fi
 
   if output="$(node -e "
@@ -705,7 +798,8 @@ finish() {
   warn "authenticating reverse proxy - see \"Hosting as a Server\" in the README."
   if (( ! BROWSER_OK )); then
     printf '\n'
-    warn "Reminder: Chromium couldn't start earlier (see above) - archiving won't work until that's fixed."
+    warn "Reminder: Chromium isn't working yet (see above) - archiving won't work until that's fixed."
+    warn "After fixing it, re-run 'bash install.sh' (nothing already done is repeated) or restart the service."
   fi
 }
 

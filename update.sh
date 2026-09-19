@@ -148,6 +148,22 @@ has_local_edits() { ! git diff --quiet HEAD -- 2>/dev/null; }
 
 short() { git rev-parse --short "$1"; }
 
+# An interrupted Chromium download leaves a folder in Puppeteer's cache with no browser in it, and
+# Puppeteer then refuses to reuse it ("exists but the executable ... is missing"), which would fail
+# the npm install of an update that bumps Puppeteer. Clear such husks first; it's only a cache of a
+# re-downloadable file, never user data.
+clean_stale_browser_cache() {
+  local cache="${PUPPETEER_CACHE_DIR:-$HOME/.cache/puppeteer}" dir
+  [[ -d "$cache" ]] || return 0
+  for dir in "$cache"/chrome/* "$cache"/chrome-headless-shell/*; do
+    [[ -d "$dir" && "$dir" == "$cache"/* ]] || continue
+    if [[ -z "$(find "$dir" -maxdepth 2 -type f -perm /111 \( -name chrome -o -name chrome-headless-shell \) -print -quit 2>/dev/null)" ]]; then
+      warn "Removing an incomplete Chromium download left by an earlier attempt: $dir"
+      rm -rf "$dir"
+    fi
+  done
+}
+
 # Puts the tree back exactly as it was before the update started: previous commit, local edits
 # re-applied on top. Used when something goes wrong after the new code has been merged.
 restore_previous_version() {
@@ -280,6 +296,7 @@ main() {
       info "Stopping the service while dependencies change..."
       service_ctl stop
     fi
+    clean_stale_browser_cache
     if npm install --no-audit --no-fund; then
       ok "Dependencies up to date"
     else

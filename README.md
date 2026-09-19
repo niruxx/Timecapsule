@@ -162,6 +162,8 @@ bash install.sh
 
 It's safe to re-run, and `--yes` accepts every default for unattended use. Useful options: `--port N`, `--service system|user|none`, `--skip-deps`, `--no-start`, and `--dry-run` to print everything it would do (including the exact unit file) without changing anything. `bash install.sh --help` lists them all.
 
+**If the Chromium download fails.** Puppeteer downloads its own Chromium (~150 MB) into `~/.cache/puppeteer`. If that gets interrupted (Ctrl+C, a dropped connection, a full disk) it can leave an empty version folder behind, and every later install then fails with `The browser folder ... exists but the executable ... is missing`. The installer (and `update.sh`) now clears such leftovers automatically before installing. If the download itself keeps failing, it installs everything else, shows the downloader's real error, and tells you what to check — usually no route to `storage.googleapis.com`, a proxy that needs `HTTPS_PROXY` set, or a full disk (`df -h ~`). Re-run `bash install.sh` once that's sorted; nothing already done is repeated. To clear it by hand: `rm -rf ~/.cache/puppeteer`.
+
 To get onto the latest commits later:
 
 ```
