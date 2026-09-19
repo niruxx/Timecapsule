@@ -9,7 +9,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
     "@mozilla/readability": "^0.5.0",
-    "adm-zip": "^0.6.0",
+    "adm-zip": "^0.6.1",
     "better-sqlite3": "^13.0.3",
     "diff": "^9.0.0",
     "express": "^4.19.2",
