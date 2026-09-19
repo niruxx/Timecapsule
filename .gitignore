@@ -3,3 +3,4 @@ archived/
 traffic.log
 bin/
 data/
+config.json

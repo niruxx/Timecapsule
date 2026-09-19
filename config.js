@@ -1,11 +1,21 @@
+const fs = require('fs');
+const path = require('path');
+
 // Server-side tuning knobs - deliberately not exposed anywhere in the website UI, since these
 // control how much load this machine takes on at once, which is an operator decision (what the
-// hardware can handle), not something to expose as a per-archive request option. Edit this file
-// and restart the server to change them.
-module.exports = {
+// hardware can handle), not something to expose as a per-archive request option.
+//
+// The values below are the defaults. To change one without editing this (tracked) file, create a
+// config.json next to it - it's gitignored, so `git pull` / update.sh never conflict with it - e.g.
+//
+//   { "PORT": 8080, "MAX_CONCURRENT_ARCHIVES": 4 }
+//
+// Keys are the same names as below (case-insensitive: "port" works too). Restart the server to
+// apply changes. Precedence for the port: the PORT environment variable, then config.json,
+// then the default here.
+const defaults = {
   // Port the server listens on. The PORT environment variable still overrides this when set
-  // (existing systemd/pm2/Docker setups that already export PORT keep working unchanged) - this
-  // is just a way to change the default without having to set an env var at all.
+  // (existing systemd/pm2/Docker setups that already export PORT keep working unchanged).
   PORT: 3000,
 
   // How many archive/import jobs run their actual Puppeteer work at once (each one is a real
@@ -34,3 +44,69 @@ module.exports = {
   // yt-dlp at all, e.g. on a locked-down or bandwidth-constrained host.
   ENABLE_MEDIA_DOWNLOADS: true,
 };
+
+const OVERRIDES_FILE = path.join(__dirname, 'config.json');
+
+// A bad value is an error rather than something to skip past: silently ignoring a typo'd port
+// would leave the server running somewhere other than where you told it to.
+function validate(key, value) {
+  const expected = typeof defaults[key];
+
+  if (expected === 'number') {
+    const n = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : value;
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error(`"${key}" must be a whole number of 1 or more (got ${JSON.stringify(value)})`);
+    }
+    if (key === 'PORT' && n > 65535) {
+      throw new Error(`"PORT" must be between 1 and 65535 (got ${n})`);
+    }
+    return n;
+  }
+
+  if (typeof value !== expected) {
+    throw new Error(`"${key}" must be true or false (got ${JSON.stringify(value)})`);
+  }
+  return value;
+}
+
+function loadOverrides() {
+  let raw;
+  try {
+    raw = fs.readFileSync(OVERRIDES_FILE, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return {};
+    throw new Error(`couldn't read config.json: ${err.message}`);
+  }
+
+  // Windows Notepad writes a UTF-8 byte-order mark, which JSON.parse rejects.
+  let parsed;
+  try {
+    parsed = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
+  } catch (err) {
+    throw new Error(`config.json isn't valid JSON: ${err.message}`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('config.json must contain a JSON object, e.g. { "PORT": 8080 }');
+  }
+
+  const overrides = {};
+  for (const [rawKey, value] of Object.entries(parsed)) {
+    const key = rawKey.toUpperCase();
+    if (!(key in defaults)) {
+      console.warn(`config.json: ignoring unknown setting "${rawKey}" (known settings: ${Object.keys(defaults).join(', ')})`);
+      continue;
+    }
+    overrides[key] = validate(key, value);
+  }
+  return overrides;
+}
+
+let overrides;
+try {
+  overrides = loadOverrides();
+} catch (err) {
+  console.error(`\nTimeCapsule configuration error: ${err.message}\nFix ${OVERRIDES_FILE} (or delete it to use the defaults) and start again.\n`);
+  process.exit(1);
+}
+
+module.exports = { ...defaults, ...overrides };
