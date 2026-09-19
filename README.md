@@ -5,7 +5,7 @@
 
 **A self-hosted, open-source alternative to Archive.org and ArchiveBox.** Paste a URL into the address bar and TimeCapsule renders it in headless Chrome, then saves a real, self-contained HTML snapshot, a PDF, and a thumbnail — all on your own disk, under your own control.
 
-The UI is a Google Photos-style timeline: every snapshot you've ever taken, grouped by day, in one scrollable grid — click any thumbnail to open it full-screen.
+The UI is a Google Photos-Fporstyle timeline: every snapshot you've ever taken, grouped by day, in one scrollable grid — click any thumbnail to open it full-screen.
 
 ## AI usage disclaimer
 
@@ -63,6 +63,7 @@ Features like the bot-check hand-off, Wayback link auto-import, and cancellable 
   - [Directory layout](#directory-layout)
   - [Export and import](#export-and-import)
   - [Concurrency](#concurrency)
+  - [Settings file (config.json)](#settings-file-configjson)
   - [Dark mode](#dark-mode)
   - [Logging](#logging)
 - [Configuration reference](#configuration-reference)
@@ -168,7 +169,7 @@ bash update.sh          # fetch, update, reinstall dependencies only if they cha
 bash update.sh --check  # just report whether an update is available
 ```
 
-`update.sh` never touches your data — `archived/`, `data/`, `bin/` and `traffic.log` aren't tracked by git, and the script never runs `git clean` or a hard reset against them. If you've edited a tracked file (typically `config.js`), your edits are set aside and re-applied on top of the new version. If they can't be merged cleanly, the whole update is rolled back and nothing changes — you're never left with half an update or conflict markers in a file the server loads. A failed `npm install` is rolled back the same way, and the service is restarted only if it was running before.
+`update.sh` never touches your data — `archived/`, `data/`, `bin/` and `traffic.log` aren't tracked by git, and the script never runs `git clean` or a hard reset against them. Your own settings are best kept in [`config.json`](#settings-file-configjson), which git doesn't track, so it's never in the update's way at all. If you've edited a tracked file anyway (typically `config.js`), your edits are set aside and re-applied on top of the new version. If they can't be merged cleanly, the whole update is rolled back and nothing changes — you're never left with half an update or conflict markers in a file the server loads. A failed `npm install` is rolled back the same way, and the service is restarted only if it was running before.
 
 ## Running on a Workstation
 
@@ -180,11 +181,34 @@ npm start
 
 Open `http://localhost:3000`, archive some pages, and press `Ctrl+C` in the terminal when you're done. That's the whole workflow: no background service, no database, just this one process while you're using it. Archived files land in `archived/` right next to the project.
 
-Use a different port if 3000 is taken:
+### Running on a custom port
+
+If 3000 is taken (or you just want a different port), there are two ways to change it. Either way, the startup line tells you what it picked: `TimeCapsule running at http://localhost:8080`.
+
+**1. In `config.json` — the permanent way.** Create a file called `config.json` next to `server.js` (there's a ready-made `config.example.json` to copy) containing the port:
+
+```json
+{
+  "PORT": 8080
+}
+```
 
 ```
-PORT=8080 npm start
+cp config.example.json config.json   # then edit the number (on Windows: copy config.example.json config.json)
+npm start
 ```
+
+Now every `npm start` — and the systemd/pm2 service, after a restart — uses port 8080. `config.json` is gitignored, so `git pull` and [`update.sh`](#linux-install-and-update-scripts) never touch it or conflict with it. The port must be a whole number from 1 to 65535; anything else (or a file that isn't valid JSON) stops the server at startup with a message saying what to fix, rather than quietly running on the wrong port. The same file can override every other setting in `config.js` — see [Settings file (config.json)](#settings-file-configjson).
+
+**2. With the `PORT` environment variable — for a one-off run.** It takes priority over `config.json`, so it's handy for trying something without editing a file:
+
+```
+PORT=8080 npm start                    # Linux / macOS
+$env:PORT = 8080; npm start            # Windows PowerShell
+set PORT=8080&& npm start              # Windows cmd.exe
+```
+
+Order of precedence: the `PORT` environment variable, then `config.json`, then the built-in default of 3000.
 
 ## Managing the Service
 
@@ -214,7 +238,7 @@ pm2 restart timecapsule   # or just re-run `npm start` if you run it in the fore
 
 **Backing up:** everything TimeCapsule knows lives under `archived/`. Click Export in the top bar (or hit `GET /api/export`) to download it as a single `.zip` — see [Export and import](#export-and-import) for the full picture, including moving to a different OS entirely.
 
-**Changing the port:** set the `PORT` environment variable before starting. With pm2, set it on the first launch (`PORT=8080 pm2 start server.js --name timecapsule`) — pm2 remembers the environment from that run.
+**Changing the port:** put `{ "PORT": 8080 }` in `config.json` (see [Running on a custom port](#running-on-a-custom-port)) and restart the service — `pm2 restart timecapsule`, or `sudo systemctl restart timecapsule` for systemd (`systemctl --user restart timecapsule` for a user service). That's the same file whether you run under pm2, systemd or by hand, and updates never overwrite it. The `PORT` environment variable also works and takes priority over `config.json`: with pm2, set it on the first launch (`PORT=8080 pm2 start server.js --name timecapsule`), which pm2 remembers; in a systemd unit it's an `Environment=PORT=8080` line. If a unit already has such a line, `config.json` will appear to be ignored — edit or remove the line instead. Whatever port you choose, update your reverse proxy and firewall to match.
 
 ## Hosting as a Server
 
@@ -423,10 +447,10 @@ To move to a different OS: click Export on the old machine, copy the `.zip` over
 
 By default, up to `MAX_CONCURRENT_ARCHIVES` (2) archive/import jobs run their actual browser work at the same time - a third request kicked off while both slots are busy shows as "Queued" in its progress indicator and starts automatically the moment a slot frees, rather than blocking your request or being rejected. This is a fixed job-count cap, not a real resource scheduler (no CPU/RAM awareness) - see the [Roadmap](#roadmap) for the fuller worker-queue version.
 
-This, and everything else in `config.js`, is deliberately a server file rather than a website setting - restart required to change it - since these are all operator decisions (what this machine's hardware can handle, how the homepage looks for everyone hitting it), not something to expose as a per-visitor control:
+This, and everything else in `config.js`, is deliberately a server file rather than a website setting - restart required to change it - since these are all operator decisions (what this machine's hardware can handle, how the homepage looks for everyone hitting it), not something to expose as a per-visitor control. These are the defaults; to change any of them, put just the ones you want in a `config.json` instead of editing this file - see [Settings file (config.json)](#settings-file-configjson):
 
 ```js
-// config.js
+// config.js (the defaults)
 module.exports = {
   PORT: 3000,                          // port the server listens on (the PORT env var still wins if set)
   MAX_CONCURRENT_ARCHIVES: 2,          // simultaneous archive/import jobs
@@ -438,6 +462,24 @@ module.exports = {
 ```
 
 Lower `MAX_CONCURRENT_ARCHIVES` on something like a Raspberry Pi (each job is a real headless-Chromium page load); raise it on a beefier machine. Set `SHOW_TIMELINE_FEED: false` if you'd rather the homepage was just the archive bar - everything's still reachable from Library either way, this only hides the inline feed. Set `ENABLE_ANIMATED_BACKGROUND: false` for a plain, static theme background instead of the drifting blobs - purely cosmetic. Set `ENABLE_MEDIA_DOWNLOADS: false` to hard-disable the yt-dlp backend: `lib/media.js` returns immediately without ever downloading the yt-dlp binary or spawning it, even if a request explicitly asks for media, and the "Download video/audio" advanced option is disabled in the UI to match - useful on a locked-down or bandwidth-constrained host.
+
+### Settings file (config.json)
+
+Every setting in `config.js` can be overridden from a plain JSON file, `config.json`, in the project root — you only list what you want to change:
+
+```json
+{
+  "PORT": 8080,
+  "MAX_CONCURRENT_ARCHIVES": 4,
+  "ENABLE_MEDIA_DOWNLOADS": false
+}
+```
+
+- **Names** are the same as in `config.js` (`PORT`, `MAX_CONCURRENT_ARCHIVES`, `MAX_CONCURRENT_MEDIA_DOWNLOADS`, `SHOW_TIMELINE_FEED`, `ENABLE_ANIMATED_BACKGROUND`, `ENABLE_MEDIA_DOWNLOADS`), and case doesn't matter, so `"port"` works too. Numbers must be whole numbers of 1 or more (`PORT` at most 65535); the true/false ones must be real JSON `true`/`false`.
+- **Restart to apply.** Settings are read once at startup.
+- **Updates never touch it.** `config.json` is gitignored, which is the point: edit `config.js` directly and a later `git pull` can conflict with your change; `config.json` can't. Copy `config.example.json` to get started.
+- **Mistakes are loud.** A file that isn't valid JSON, or a value of the wrong kind, stops the server at startup with a message naming the problem and the file. An unknown name is only warned about and skipped, so a typo like `"PROT"` shows up in the log instead of silently doing nothing.
+- **Precedence** — for the port: the `PORT` environment variable, then `config.json`, then the default in `config.js`. Every other setting: `config.json`, then `config.js`.
 
 ### Dark mode
 
@@ -468,9 +510,11 @@ All of this — what gets printed, what gets written to `traffic.log`, and in wh
 
 ## Configuration reference
 
+Anything listed as living in `config.js` can be overridden without touching that file, by naming it in a `config.json` — see [Settings file (config.json)](#settings-file-configjson).
+
 | Setting | Default | Where | Purpose |
 |---|---|---|---|
-| `PORT` | `3000` | `config.js`, or the `PORT` env var | Port the server listens on - the env var wins if both are set |
+| `PORT` | `3000` | `config.json` (or `config.js`), or the `PORT` env var | Port the server listens on - see [Running on a custom port](#running-on-a-custom-port). Precedence: env var, then `config.json`, then `config.js` |
 | `ANTHROPIC_API_KEY` (env var) | unset | shell environment | Turns on [AI summaries & tags](#ai-summaries--tags). Archiving works identically without it, just without summaries/tags. |
 | `MAX_SUBLINKS` | `15` | `lib/archiver.js` | "This page + its links" depth: max links archived from the one page you typed |
 | `MAX_RECURSIVE_PAGES` | `100` | `lib/archiver.js` | "Entire site" depth: max total pages crawled per site, including the main page |
