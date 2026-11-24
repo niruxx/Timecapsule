@@ -49,6 +49,7 @@ These screenshots show the previous interface and its capture workflows.
 - [Why AI-assisted development](#why-ai-assisted-development)
 - [Screenshots](#screenshots)
 - [Features](#features)
+- [Organizing and importing captures](#organizing-and-importing-captures)
 - [Roadmap](#roadmap)
 - [Installing](#installing)
 - [Uninstalling](#uninstalling)
@@ -88,7 +89,10 @@ These screenshots show the previous interface and its capture workflows.
 | **Archive depth** | Choose how wide each archive run goes: just this page, this page plus its outbound links (the default), or a full recursive crawl of the whole site (warns you first — it's much heavier). See [Archive depth](#archive-depth). |
 | **Full-text search** | Search reaches inside every archived page's actual content, not just its URL — an embedded [SQLite FTS5](https://www.sqlite.org/fts5.html) index (`data/search.db`, self-healing: rebuilt for anything missing from it on startup) is checked alongside the existing URL/domain matching, with a highlighted snippet shown for content-only matches. If the native SQLite binding can't load on your platform, search silently falls back to URL/domain-only rather than breaking. |
 | **AI summaries & tags** *(optional)* | When `ANTHROPIC_API_KEY` is set, every article-like archive gets a 2–3 sentence summary, a handful of topical tags, and named entities via the Claude API, shown right in the viewer. Off by default (it's the one feature that adds real per-archive latency) — nothing changes until you set the env var. See [AI summaries & tags](#ai-summaries--tags). |
-| **Tags (Smart Collections)** | Browse every archive by AI-generated tag from the "Tags" button in the sidebar (only appears once at least one archive has a tag). Click a tag to see every snapshot carrying it, across every site. |
+| **Tags and collections** | Add manual tags with or without AI, move snapshots into named collections, and apply tagging, moving, or ZIP export to a selection. |
+| **Saved searches** | Combine title, URL, tag, or full-text search with site, date, format, and collection filters. Bookmark the query, filters, and sort order in your browser. |
+| **Bulk capture** | Paste a URL list or load a browser bookmarks HTML export. Preview new, existing, and duplicate entries before capturing. |
+| **Browser save and quick actions** | Use the bookmarklet to bring the page you’re viewing into TimeCapsule. Open quick actions with Ctrl+K or Command+K. |
 | **URL canonicalization & dedup** | Incoming URLs are normalized (tracking params like `utm_*`/`fbclid` stripped, host lowercased, trailing slash and fragment removed) before archiving, so the same article reached through different tracking links is recognized as the same page. A plain, unconfigured re-request for a URL archived in the last 5 minutes reuses that snapshot instead of re-capturing — an explicit User-Agent, extra wait, or cookies always forces a fresh capture, though. |
 | **Change detection & text diffs** | Re-archiving a URL you've saved before compares its new article text against the last time, flagging "changed" with a line-level +/− count and a "View Changes" button in the viewer that opens a real word-level diff (insertions/deletions highlighted). Only compares article-like main pages, not incidental sub-links. |
 | **Library** | A thumbnail grid of every archived site; click through to a Wayback-Machine-style calendar of every date it was archived. Delete a single day's snapshots from the calendar, or an entire site's history from the grid. |
@@ -97,6 +101,13 @@ These screenshots show the previous interface and its capture workflows.
 | **Concurrent archiving** | More than one archive/import job can run its Puppeteer work at once (capped at `MAX_CONCURRENT_ARCHIVES` in `config.js`, default 2) - extra requests queue and start automatically as a slot frees, rather than blocking or getting rejected. Media downloads within a page's media pass run concurrently too (`MAX_CONCURRENT_MEDIA_DOWNLOADS`). |
 | **Dark mode** | Follows the system theme by default and remembers a manual choice from the header. |
 | **Logging** | Prints progress to the terminal as pages are archived, and appends every archive request (URL + requester IP) to `traffic.log`. |
+
+## Organizing and importing captures
+
+- Open a snapshot and choose **Organize**, or use **Select** and **Review actions** for several snapshots. Add or remove manual tags, move captures to a new or existing collection, or export the reviewed selection as a ZIP. Use **Collections** to browse or organize a whole collection. Moving all its captures to a new name renames it, and leaving the collection name blank unfiles them.
+- Use **Save search** to bookmark the history query, filters, and sort order on this browser. Capture tags and collection membership travel with the snapshots in a ZIP backup.
+- Choose **Bulk capture** to paste a list or upload a browser bookmarks HTML file. Review up to 200 URLs per batch. Repeated URLs within a batch are skipped, and you can choose to capture previously saved URLs again. A batch captures one page per URL and can file the results in a collection. Keep the TimeCapsule tab open while a batch runs.
+- Choose **Browser save** and drag the bookmarklet to your bookmarks bar. Use it on a web page to open TimeCapsule with that page’s URL filled in, then choose your capture settings and save.
 
 ## Roadmap
 
@@ -132,12 +143,14 @@ bash install.sh
 `install.sh` walks through, and skips anything already done:
 
 1. Installs `git`, `curl` and the system libraries headless Chromium needs (apt, dnf/yum or pacman; the renamed `t64` packages on Ubuntu 24.04 are handled), and Node.js 18+ from NodeSource if you don't have it.
-2. Runs `npm ci`, then starts Chromium once to prove it works. If it can't, it prints the missing libraries (or the Ubuntu 23.10+ AppArmor sandbox restriction) instead of leaving you to find out on your first archive.
+2. Runs `npm ci`. If a native dependency needs missing build tools, the installer offers to install Python 3, `make`, and a C++ compiler, then retries. It also checks that Chromium can start and reports missing libraries or sandbox errors.
 3. Asks for a port and offers to create a **systemd service** — a system-wide one that starts at boot (recommended), or a user service that needs no root (with optional "linger" so it starts at boot too). It's enabled and started, then checked over HTTP.
 
 It's safe to re-run, and `--yes` accepts every default for unattended use. Useful options: `--port N`, `--service system|user|none`, `--skip-deps`, `--no-start`, and `--dry-run` to print everything it would do (including the exact unit file) without changing anything. `bash install.sh --help` lists them all.
 
 **If the Chromium download fails.** Puppeteer downloads its own Chromium (~150 MB) into `~/.cache/puppeteer`. If that gets interrupted (Ctrl+C, a dropped connection, a full disk) it can leave an empty version folder behind, and every later install then fails with `The browser folder ... exists but the executable ... is missing`. The installer (and `update.sh`) now clears such leftovers automatically before installing. If the download itself keeps failing, it installs everything else, shows the downloader's real error, and tells you what to check — usually no route to `storage.googleapis.com`, a proxy that needs `HTTPS_PROXY` set, or a full disk (`df -h ~`). Re-run `bash install.sh` once that's sorted; nothing already done is repeated. To clear it by hand: `rm -rf ~/.cache/puppeteer`.
+
+**If `node-gyp` reports missing build tools.** On Arch Linux or Manjaro, install them with `sudo pacman -S --needed python make gcc`. On Debian or Ubuntu, use `sudo apt-get install python3 make g++`. On Fedora, use `sudo dnf install python3 make gcc-c++`. Then rerun `bash install.sh` as your regular user.
 
 To get onto the latest commits later:
 
@@ -383,7 +396,7 @@ Two things worth knowing:
 
 Set the `ANTHROPIC_API_KEY` environment variable before starting TimeCapsule and every article-like archive (the same ones that get `article.md`/`article.txt` - see step 3 below) also gets a 2-3 sentence summary, 3-8 topical tags, and any named people/organizations/places, via the [Claude API](https://claude.com/platform/api) (`claude-opus-5`, `lib/ai-enrich.js`). This is the one optional feature that adds real per-archive latency (an API round trip), so unlike everything else in this list it's off unless you explicitly opt in by setting the key - nothing about a normal archive changes until you do.
 
-Once at least one archive has a tag, a **Tags** button appears in the sidebar - it opens a tag cloud (every tag in use, with a count), and clicking a tag lists every archive that carries it, across every site. This is also what the roadmap called "Smart Collections": browsing by tag rather than by domain/date like the Library view does.
+The **Tags** button in the sidebar shows manual and AI-generated tags across your archive. When you organize a snapshot, you can copy an AI suggestion into its manual tags. Collections and manual tags also work with AI disabled.
 
 If the API call fails for any reason (rate limit, network error, no credit) the archive still completes normally, just without a summary/tags for that one page.
 

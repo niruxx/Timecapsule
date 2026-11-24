@@ -419,11 +419,43 @@ npm_failed_on_browser_download() {
   [[ -n "$NPM_LOG" && -f "$NPM_LOG" ]] && grep -qE 'Failed to set up|PUPPETEER_SKIP_DOWNLOAD|puppeteer/lib/esm/puppeteer/node/install' "$NPM_LOG"
 }
 
-# Runs npm while keeping a copy of its output in $NPM_LOG (still shown live) so a failure can be
-# classified. pipefail makes the pipeline report npm's status, not tee's.
+npm_failed_on_missing_build_tools() {
+  [[ -n "$NPM_LOG" && -f "$NPM_LOG" ]] || return 1
+  grep -qEi 'node-gyp.*rebuild|gyp (ERR!|error)' "$NPM_LOG" || return 1
+  grep -qEi 'not found: make|could not find any Python installation' "$NPM_LOG" \
+    || ! command -v make >/dev/null \
+    || { [[ -z "${CXX:-}" ]] && ! command -v c++ >/dev/null; }
+}
+
+npm_failed_on_lockfile() {
+  [[ -n "$NPM_LOG" && -f "$NPM_LOG" ]] && grep -qiE 'lock.*in sync|Invalid: lock file|Missing: .* from lock file' "$NPM_LOG"
+}
+
+install_native_toolchain() {
+  local -a install
+  detect_pkg_manager
+  case "$PM" in
+    apt)     install=(apt-get install -y python3 make g++) ;;
+    dnf|yum) install=("$PM" install -y python3 make gcc-c++) ;;
+    pacman)  install=(pacman -S --needed --noconfirm python make gcc) ;;
+    *)
+      warn "Install Python 3, make and a C++ compiler for your distribution, then run install.sh again."
+      return 1
+      ;;
+  esac
+
+  if (( SKIP_DEPS )) || ! ask_yes_no "Install the native build tools (Python 3, make and a C++ compiler)?" y || ! need_sudo; then
+    warn "Run 'sudo ${install[*]}' to install the build tools, then run install.sh again."
+    return 1
+  fi
+  run sudo "${install[@]}"
+}
+
+# Reuse the same temporary log for retries. pipefail preserves npm's failure
+# status while tee shows npm output and stores it for each diagnosis.
 run_npm_logged() {
   if (( DRY_RUN )); then run "$@"; return 0; fi
-  NPM_LOG="$(mktemp)"
+  [[ -n "$NPM_LOG" ]] || NPM_LOG="$(mktemp)" || return 1
   "$@" 2>&1 | tee "$NPM_LOG"
 }
 
@@ -434,38 +466,35 @@ install_npm_deps() {
   clean_stale_browser_cache
 
   local -a cmd=(npm ci --no-audit --no-fund)
+  local -a npm_env=()
+  local retried_build=0 browser_deferred=0
   [[ -f package-lock.json ]] || cmd=(npm install --no-audit --no-fund)
 
-  if run_npm_logged "${cmd[@]}"; then
-    if (( ! DRY_RUN )); then ok "Dependencies installed"; fi
-    rm -f "$NPM_LOG"
-    return 0
-  fi
-
-  # Work out what actually went wrong instead of blindly retrying the same thing. When it was only
-  # Puppeteer's Chromium download, install everything else without it, then fetch the browser as its
-  # own step where a failure is reported properly.
-  if npm_failed_on_browser_download; then
-    warn "Puppeteer couldn't set up Chromium during the install - installing the rest without it first."
-    if run env PUPPETEER_SKIP_DOWNLOAD=1 "${cmd[@]}"; then
-      ok "Dependencies installed"
+  until run_npm_logged "${npm_env[@]}" "${cmd[@]}"; do
+    if (( ! retried_build )) && npm_failed_on_missing_build_tools; then
+      warn "npm needs the Linux build toolchain to compile a native dependency."
+      if ! install_native_toolchain; then
+        rm -f "$NPM_LOG"
+        die "Native build tools could not be installed. See the output above."
+      fi
+      retried_build=1
+    elif (( ! browser_deferred )) && npm_failed_on_browser_download; then
+      warn "Puppeteer couldn't set up Chromium during the install. Continuing without the browser download."
+      npm_env=(env PUPPETEER_SKIP_DOWNLOAD=1)
+      browser_deferred=1
+    elif [[ "${cmd[1]}" == ci ]] && npm_failed_on_lockfile; then
+      warn "npm reports that package-lock.json is out of sync. Trying npm install instead."
+      cmd[1]=install
+    else
       rm -f "$NPM_LOG"
-      download_browser || true   # already reported; verify_browser gives the final verdict
-      return 0
+      die "npm couldn't install the dependencies. See the npm error above before rerunning install.sh."
     fi
-  elif [[ "${cmd[1]}" == ci ]]; then
-    warn "npm ci failed (is package-lock.json out of sync with package.json?) - trying npm install instead."
-    if run env PUPPETEER_SKIP_DOWNLOAD=1 npm install --no-audit --no-fund; then
-      ok "Dependencies installed"
-      rm -f "$NPM_LOG"
-      download_browser || true
-      return 0
-    fi
-  fi
+  done
 
   rm -f "$NPM_LOG"
-  die "npm couldn't install the dependencies (its error is above). Usual causes: no access to registry.npmjs.org,
-    a full disk, or an out-of-date Node/npm. Fix that and re-run - it's safe to run again."
+  NPM_LOG=""
+  if (( ! DRY_RUN )); then ok "Dependencies installed"; fi
+  if (( browser_deferred )); then download_browser || true; fi
 }
 
 verify_browser() {

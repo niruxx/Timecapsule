@@ -35,6 +35,11 @@
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h5m4 0h7M4 17h9m4 0h3"/><circle cx="11" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4Z"/></symbol>
+  <symbol id="i-stack" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 9V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V9Z"/></symbol>
 </svg>
 <a class="skip-link" href="#main-content">Skip to content</a>
 <div class="workspace">
@@ -47,7 +52,9 @@
       <div class="nav-label">Workspace</div>
       <button id="timeline-btn" class="nav-item" type="button" aria-current="page"><svg class="ui-icon" aria-hidden="true"><use href="#i-clock"></use></svg><span>Timeline</span></button>
       <button id="snapshots-btn" class="nav-item" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-library"></use></svg><span>Library</span></button>
-      <button id="tags-btn" class="nav-item" type="button" hidden><svg class="ui-icon" aria-hidden="true"><use href="#i-tag"></use></svg><span>Tags</span></button>
+      <button id="tags-btn" class="nav-item" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-tag"></use></svg><span>Tags</span></button>
+      <button id="collections-btn" class="nav-item" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-folder"></use></svg> <span>Collections</span></button>
+      <button id="saved-searches-btn" class="nav-item" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-bookmark"></use></svg> <span>Saved searches</span></button>
       <div class="nav-label nav-label-tools">Archive tools</div>
       <button id="wayback-btn" class="nav-item" type="button" aria-label="Wayback Machine"><svg class="ui-icon" aria-hidden="true"><use href="#i-history"></use></svg><span>Wayback<span class="nav-detail"> Machine</span></span></button>
       <button id="import-btn" class="nav-item" type="button" aria-label="Import backup"><svg class="ui-icon" aria-hidden="true"><use href="#i-upload"></use></svg><span>Import<span class="nav-detail"> backup</span></span></button>
@@ -67,10 +74,10 @@
         <div class="search-shell">
           <span class="search-icon"><svg class="ui-icon" aria-hidden="true"><use href="#i-search"></use></svg></span>
           <input id="search-input" type="search" placeholder="Search your archive" autocomplete="off" aria-label="Search your archive" aria-controls="search-results">
-          <kbd id="search-shortcut" aria-hidden="true">Ctrl K</kbd>
           <button id="search-clear" class="search-clear" type="button" aria-label="Clear search" hidden><svg class="ui-icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
           <div id="search-results" class="search-dropdown" aria-label="Search results"></div>
         </div>
+        <button id="command-btn" class="icon-pill" type="button" aria-label="Quick actions" title="Quick actions (Ctrl or Command + K)"><svg class="ui-icon" aria-hidden="true"><use href="#i-command"></use></svg> <kbd id="search-shortcut" aria-hidden="true">Ctrl K</kbd></button>
         <button id="theme-toggle" type="button" class="icon-pill theme-toggle" aria-label="Switch to dark mode" title="Switch color theme">
           <svg class="ui-icon theme-moon" aria-hidden="true"><use href="#i-moon"></use></svg><svg class="ui-icon theme-sun" aria-hidden="true"><use href="#i-sun"></use></svg>
         </button>
@@ -81,6 +88,7 @@
     <main id="main-content" class="page">
       <div class="page-heading">
         <h1>Your archive</h1>
+        <button id="browser-save-btn" class="btn-tonal" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-bookmark"></use></svg> Browser save</button>
       </div>
       <section class="hero" aria-labelledby="capture-title">
         <div class="hero-content">
@@ -150,6 +158,7 @@
               </label>
             </div>
           </details>
+          <button id="batch-btn" class="btn-tonal batch-launch" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-stack"></use></svg> Bulk capture</button>
 
         </div>
         <div class="capture-art" aria-hidden="true">
@@ -167,16 +176,39 @@
         <div class="activity-header">
           <div><h2 id="activity-title">Capture history</h2><p id="activity-count">Browse your saved snapshots.</p></div>
           <div id="timeline-controls" class="timeline-controls" hidden>
-            <select id="domain-filter" aria-label="Filter by site"><option value="">All sites</option></select>
-            <select id="format-filter" aria-label="Filter by saved format">
-              <option value="">All formats</option><option value="screenshot">Screenshot</option>
-              <option value="article">Article</option><option value="warc">WARC</option><option value="media">Media</option>
-            </select>
+            <button id="selection-toggle" class="btn-tonal" type="button" aria-pressed="false"><svg class="ui-icon" aria-hidden="true"><use href="#i-check"></use></svg> Select</button>
             <div class="view-options" role="group" aria-label="Snapshot layout">
               <button id="grid-view" data-view="grid" type="button" aria-label="Grid view" aria-pressed="true" title="Grid view"><svg class="ui-icon" aria-hidden="true"><use href="#i-grid"></use></svg></button>
               <button id="list-view" data-view="list" type="button" aria-label="List view" aria-pressed="false" title="List view"><svg class="ui-icon" aria-hidden="true"><use href="#i-list"></use></svg></button>
             </div>
           </div>
+        </div>
+        <div id="history-tools" class="history-tools" hidden>
+          <form id="history-search" class="history-search">
+            <input id="history-query" type="search" aria-label="Search capture history" placeholder="Title, URL, tag, or page text">
+            <button class="btn-tonal" type="submit"><svg class="ui-icon" aria-hidden="true"><use href="#i-search"></use></svg> Search</button>
+          </form>
+          <div class="history-actions">
+            <button id="save-search-btn" class="btn-tonal" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-bookmark"></use></svg> Save search</button>
+            <select id="sort-filter" aria-label="Sort snapshots"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="title">Title A–Z</option></select>
+          </div>
+          <details id="history-filters" class="history-filters">
+            <summary><svg class="ui-icon" aria-hidden="true"><use href="#i-sliders"></use></svg> Filters <span id="filter-count"></span></summary>
+            <div class="filter-fields">
+              <label>Site <select id="domain-filter"><option value="">All sites</option></select></label>
+              <label>Format <select id="format-filter"><option value="">All formats</option><option value="screenshot">Screenshot</option><option value="article">Article</option><option value="warc">WARC</option><option value="media">Media</option></select></label>
+              <label>Tag <select id="tag-filter"><option value="">All tags</option></select></label>
+              <label>Collection <select id="collection-filter"><option value="">All collections</option></select></label>
+              <label>From <input id="date-from" type="date"></label>
+              <label>Through <input id="date-through" type="date"></label>
+              <button id="reset-filters" class="btn-tonal" type="button">Reset</button>
+            </div>
+          </details>
+        </div>
+        <div id="selection-bar" class="selection-bar" hidden>
+          <strong id="selected-count" role="status"></strong>
+          <button id="select-visible" class="btn-tonal" type="button">Select visible</button>
+          <button id="review-selection" class="btn-filled" type="button" disabled>Review actions</button>
         </div>
         <div id="timeline" class="timeline" aria-live="polite" aria-busy="true"></div>
       </section>
@@ -218,6 +250,7 @@
       <div id="viewer-date" class="viewer-date"></div>
     </div>
     <div class="viewer-actions">
+      <button id="viewer-organize" class="btn-tonal" type="button" hidden>Organize</button>
       <a id="viewer-html" class="btn-tonal" target="_blank" rel="noopener">Open HTML</a>
       <a id="viewer-pdf" class="btn-tonal" target="_blank" rel="noopener">Open PDF</a>
       <a id="viewer-screenshot" class="btn-tonal" target="_blank" rel="noopener" hidden>Open Screenshot</a>
@@ -269,5 +302,6 @@
 </div>
 
 <script src="app.js"></script>
+<script src="workspace.js"></script>
 </body>
 </html>

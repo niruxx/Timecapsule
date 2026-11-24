@@ -5,7 +5,7 @@ TimeCapsule’s core workflow is to capture a URL, find it again, and open the b
 | Phase | Outcome | Status |
 | --- | --- | --- |
 | 1. Archive workspace | Capture and browse snapshots from a consistent desktop and mobile interface | Implemented |
-| 2. Organization and intake | Organize larger archives and save links in batches | Planned |
+| 2. Organization and intake | Organize larger archives and save links in batches | Implemented |
 | 3. Replay and comparison | Read, replay, and compare versions from one snapshot workspace | Planned |
 | 4. Capture operations | Manage capture jobs, recurring checks, and storage from the UI | Planned |
 | 5. Hosting and access | Support more storage options and shared instances | Planned |
@@ -19,11 +19,11 @@ TimeCapsule’s core workflow is to capture a URL, find it again, and open the b
 
 ## Phase 2 — Organization and intake
 
-- [ ] Add user-managed tags and collections, with AI tags remaining available as suggestions.
-- [ ] Add date and tag filters, sorting, and bookmarked searches to the main archive view.
-- [ ] Support bulk capture from pasted URLs and browser bookmark exports, with a preview and duplicate handling.
-- [ ] Add bulk tag, move, and export actions with a preview of the affected snapshots.
-- [ ] Add a browser save action and a command palette for adding URLs and navigating the archive.
+- [x] Add user-managed tags and collections, with AI tags remaining available as suggestions.
+- [x] Add date and tag filters, sorting, and bookmarked searches to the main archive view.
+- [x] Support bulk capture from pasted URLs and browser bookmark exports, with a preview and duplicate handling.
+- [x] Add bulk tag, move, and export actions with a preview of the affected snapshots.
+- [x] Add a browser save bookmarklet and a command palette for adding URLs and navigating the archive.
 
 **Exit criteria.** A user can import a bookmark collection, organize the resulting snapshots without AI enabled, and retrieve them by date, site, or tag.
 

@@ -187,8 +187,6 @@ for (const button of viewButtons) {
     localStorage.setItem(VIEW_KEY, button.dataset.view);
   });
 }
-domainFilter.addEventListener('change', renderTimeline);
-formatFilter.addEventListener('change', renderTimeline);
 timelineButton.addEventListener('click', () => window.scrollTo({ top: 0 }));
 
 async function loadTimeline({ skeleton = true } = {}) {
@@ -205,15 +203,14 @@ async function loadTimeline({ skeleton = true } = {}) {
     if (request !== timelineRequest) return;
 
     timelineEntries = entries;
-    const previousDomain = domainFilter.value;
-    const domains = [...new Set(entries.map((entry) => entry.domain))].sort((a, b) => a.localeCompare(b));
-    domainFilter.replaceChildren(new Option('All sites', ''), ...domains.map((domain) => new Option(domain, domain)));
-    if (domains.includes(previousDomain)) domainFilter.value = previousDomain;
-    timelineControls.hidden = !entries.length;
+    updateHistoryOptions(entries);
+    if (historyTerm && historyTerm === historyQuery.value.trim()) await refreshHistorySearch(historyTerm);
+    if (request !== timelineRequest) return;
     renderTimeline();
   } catch (err) {
     if (request !== timelineRequest) return;
     timelineControls.hidden = true;
+    historyTools.hidden = true;
     activityCount.textContent = 'Capture history unavailable';
     timelineEl.innerHTML = `<div class="tl-empty"><div class="tl-empty-title">${escapeHtml(err.message)}</div><button type="button" class="btn-tonal">Try again</button></div>`;
     timelineEl.querySelector('button').addEventListener('click', () => loadTimeline());
@@ -223,15 +220,12 @@ async function loadTimeline({ skeleton = true } = {}) {
 }
 
 function renderTimeline() {
-  const domain = domainFilter.value;
-  const format = formatFilter.value;
-  const entries = timelineEntries.filter((entry) => {
-    const matchesFormat = !format || (format === 'media' ? entry.media?.length : entry[format]);
-    return (!domain || entry.domain === domain) && matchesFormat;
-  });
+  const entries = filterSnapshotEntries();
+  const filtered = Boolean(activeHistoryFilters() || historyTerm);
+  updateSelectionPanel(entries.length);
 
   const snapshotLabel = timelineEntries.length === 1 ? 'snapshot' : 'snapshots';
-  activityCount.textContent = domain || format
+  activityCount.textContent = filtered
     ? `${entries.length} of ${timelineEntries.length} ${snapshotLabel}`
     : `${timelineEntries.length} ${snapshotLabel}`;
 
@@ -241,15 +235,12 @@ function renderTimeline() {
       <div class="tl-empty">
         <span class="tl-empty-art">${icon('archive')}</span>
         <div class="tl-empty-title">${hasArchive ? 'No matching snapshots' : 'No snapshots yet'}</div>
-        <div class="tl-empty-hint">${hasArchive ? 'Change the site or format filter to see more results.' : 'Archive a URL to start building your history.'}</div>
+        <div class="tl-empty-hint">${hasArchive ? 'Try changing your query or filters.' : 'Archive a URL to start building your history.'}</div>
         <button type="button" class="btn-tonal">${hasArchive ? 'Clear filters' : 'Archive a URL'}</button>
       </div>`;
     timelineEl.querySelector('button').addEventListener('click', () => {
       if (hasArchive) {
-        domainFilter.value = '';
-        formatFilter.value = '';
-        renderTimeline();
-        domainFilter.focus();
+        resetHistoryFilters();
       } else {
         input.focus();
       }
@@ -260,8 +251,9 @@ function renderTimeline() {
   const groups = new Map();
   entries.forEach((entry, index) => {
     const date = new Date(entry.archivedAt);
-    const key = dayKey(date);
-    if (!groups.has(key)) groups.set(key, { label: friendlyDate(date), cards: [] });
+    const byTitle = sortFilter.value === 'title';
+    const key = byTitle ? 'title' : dayKey(date);
+    if (!groups.has(key)) groups.set(key, { label: byTitle ? 'By title' : friendlyDate(date), cards: [] });
     groups.get(key).cards.push(renderTimelineCard(entry, index));
   });
 
@@ -275,7 +267,11 @@ function renderTimeline() {
     </section>`).join('');
 
   timelineEl.querySelectorAll('.tl-card').forEach((card) => {
-    card.addEventListener('click', () => openViewer(entries[Number(card.dataset.index)]));
+    const entry = entries[Number(card.dataset.index)];
+    card.addEventListener('click', () => {
+      if (selectingSnapshots) updateSnapshotSelection(entry, card);
+      else openViewer(entry);
+    });
   });
 }
 
@@ -283,13 +279,16 @@ function renderTimelineCard(entry, index) {
   const time = new Date(entry.archivedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const title = entry.title || entry.url;
   const count = entry.sublinkCount;
+  const selected = selectingSnapshots ? ` aria-pressed="${selectedSnapshots.has(entry.dir)}"` : '';
   return `
-    <button type="button" class="tl-card" data-index="${index}" title="${escapeHtml(title)}">
+    <button type="button" class="tl-card" data-index="${index}" title="${escapeHtml(title)}"${selected}>
       <span class="tl-thumb" aria-hidden="true" style="${thumbStyle(entry.thumbnail)}">${entry.thumbnail ? '' : icon('globe')}</span>
+      ${selectingSnapshots ? `<span class="snapshot-check" aria-hidden="true">${icon('check')}</span>` : ''}
       <span class="tl-info">
         <span class="tl-title">${escapeHtml(title)}</span>
         <span class="tl-sub">${escapeHtml(entry.domain)} · ${escapeHtml(time)}</span>
         ${count ? `<span class="tl-badge">${count} linked page${count === 1 ? '' : 's'}</span>` : ''}
+        ${entry.collection ? `<span class="tl-badge collection-badge">${icon('folder')} ${escapeHtml(entry.collection)}</span>` : ''}
       </span>
     </button>`;
 }
@@ -340,6 +339,7 @@ viewerImg.addEventListener('error', () => {
 
 function openViewer(entry) {
   viewerEntry = entry;
+  document.getElementById('viewer-organize').hidden = entry.dir.split('/').length !== 2;
   viewerTitle.textContent = entry.title || '';
   viewerTitle.hidden = !entry.title;
   viewerUrl.textContent = entry.url;
@@ -444,7 +444,6 @@ viewerDelete.addEventListener('click', async () => {
     showToast('Snapshot deleted');
     closeViewer();
     loadTimeline({ skeleton: false });
-    refreshTagsButton();
   } catch (err) {
     showToast(err.message || 'Delete failed', 'error');
   }
@@ -525,7 +524,6 @@ function onArchiveDone(data) {
     );
   }
   loadTimeline({ skeleton: false });
-  refreshTagsButton();
 }
 
 async function stopActiveJob() {
@@ -660,6 +658,11 @@ function queueSearch() {
 searchInput.addEventListener('input', queueSearch);
 searchInput.addEventListener('focus', queueSearch);
 searchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && searchInput.value.trim() && !activity.hidden) {
+    event.preventDefault();
+    closeSearch();
+    showHistorySearch(searchInput.value.trim());
+  }
   if (event.key === 'ArrowDown' && searchResults.classList.contains('show')) {
     event.preventDefault();
     searchResults.querySelector('.search-open')?.focus();
@@ -750,12 +753,11 @@ document.addEventListener('keydown', (event) => {
   }
   if (!modal && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();
-    searchInput.focus();
-    searchInput.select();
+    openCommandPalette();
   }
   if (!modal || event.key !== 'Tab') return;
 
-  const controls = Array.from(modal.querySelectorAll('button, a[href], input, select')).filter((control) =>
+  const controls = Array.from(modal.querySelectorAll('button, a[href], input, select, textarea, summary')).filter((control) =>
     !control.disabled && !control.closest('[hidden]') && control.getClientRects().length
   );
   const first = controls[0];
@@ -779,19 +781,6 @@ snapshotsBtn.addEventListener('click', () => {
    Tags (Smart Collections)
    ============================================================ */
 
-// The Tags button only shows up once at least one archive actually has a tag - most installs
-// won't have AI tagging configured (it's optional, see lib/ai-enrich.js), so there's no reason
-// to advertise an empty feature.
-async function refreshTagsButton() {
-  try {
-    const res = await fetch('/api/tags');
-    const tags = await res.json();
-    tagsBtn.hidden = !Array.isArray(tags) || !tags.length;
-  } catch {
-    tagsBtn.hidden = true;
-  }
-}
-
 tagsBtn.addEventListener('click', () => {
   openDialog();
   showTagCloud();
@@ -811,7 +800,7 @@ async function showTagCloud() {
       dialogBody.innerHTML = `
         <div class="dialog-empty">
           <div class="tl-empty-art">🏷️</div>
-          <div>No tags yet.</div>
+          <div>No tags yet. Open a snapshot and choose Organize to add one.</div>
         </div>`;
       return;
     }
@@ -902,7 +891,6 @@ async function showSitesGrid() {
           showToast(`Deleted ${domain}`);
           showSitesGrid();
           loadTimeline({ skeleton: false });
-          refreshTagsButton();
         } catch (err) {
           showToast(err.message || 'Delete failed', 'error');
         }
@@ -1052,7 +1040,6 @@ async function showCalendar(domain) {
           showToast('Day deleted');
           showCalendar(domain);
           loadTimeline({ skeleton: false });
-          refreshTagsButton();
         } catch (err) {
           showToast(err.message || 'Delete failed', 'error');
         }
@@ -1159,7 +1146,6 @@ importFile.addEventListener('change', async () => {
     showToast('Import completed');
     if (!dialogOverlay.hidden) showSitesGrid();
     loadTimeline({ skeleton: false });
-    refreshTagsButton();
   } catch (err) {
     showToast(err.message || 'Import failed', 'error');
   } finally {
@@ -1268,7 +1254,6 @@ async function runWaybackImport(url, timestamp, rowEl) {
     showToast('Imported from the Wayback Machine');
     if (rowEl.isConnected && !dialogOverlay.hidden) closeDialog();
     loadTimeline({ skeleton: false });
-    refreshTagsButton();
   } catch (err) {
     showToast(err.message || 'Import failed', 'error');
     rowEl.disabled = false;
@@ -1303,6 +1288,7 @@ async function applySettings() {
   }
 }
 
-loadTimeline();
-refreshTagsButton();
-applySettings();
+document.addEventListener('DOMContentLoaded', () => {
+  loadTimeline();
+  applySettings();
+});

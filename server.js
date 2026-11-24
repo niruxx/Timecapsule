@@ -8,6 +8,7 @@ const { archiveUrl, importWaybackSnapshot } = require('./lib/archiver');
 const {
   listSites, listTimeline, listSiteHistory, searchArchives, deleteSite, deleteMainDirs,
   listAllArchives, listTags, listByTag, findRecentArchive,
+  resolveSelectedArchives, organizeArchives,
 } = require('./lib/history');
 const { log, logTraffic } = require('./lib/logger');
 const { parseCookies } = require('./lib/cookies');
@@ -134,8 +135,54 @@ function runWaybackImportJob(job, target, timestampHint, ip) {
   })();
 }
 
+app.post('/api/archive/preview', async (req, res) => {
+  const { urls } = req.body || {};
+  if (!Array.isArray(urls) || !urls.length || urls.length > 200) {
+    return res.status(400).json({ error: 'Enter between 1 and 200 URLs per batch.' });
+  }
+  try {
+    const existing = new Set();
+    const historical = new Set();
+    for (const entry of await listTimeline(ARCHIVE_DIR)) {
+      try {
+        const url = canonicalizeUrl(entry.url);
+        existing.add(url);
+        if (entry.source === 'wayback') historical.add(url + ' ' + new Date(entry.archivedAt).toISOString());
+      } catch {
+        // Ignore entries with legacy metadata that has no valid URL or date.
+      }
+    }
+    const seen = new Set();
+    const items = urls.map((input) => {
+      try {
+        const raw = typeof input === 'string' ? input.trim() : '';
+        if (!raw || /[\s]/.test(raw) ||
+          (!/^https?:\/\//i.test(raw) && /^[a-z][a-z\d+.-]*:/i.test(raw) && !/^(?:localhost|[^:/]+\.[^:/]+):\d+(?:[/?#]|$)/i.test(raw))) {
+          throw new Error('Expected an HTTP or HTTPS URL.');
+        }
+        const normalized = normalizeUrl(raw);
+        const wayback = parseWaybackUrl(normalized);
+        const url = wayback ? normalized : canonicalizeUrl(normalized);
+        const original = wayback ? canonicalizeUrl(wayback.originalUrl) : url;
+        const key = wayback ? original + ' ' + wayback.timestamp : url;
+        const exists = wayback
+          ? wayback.timestamp.length === 14 && historical.has(original + ' ' + parseWaybackTimestamp(wayback.timestamp).toISOString())
+          : existing.has(url);
+        const status = seen.has(key) ? 'duplicate' : exists ? 'existing' : 'new';
+        seen.add(key);
+        return { input, url, status };
+      } catch {
+        return { input, status: 'invalid' };
+      }
+    });
+    res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/archive', async (req, res) => {
-  const { url, depth, userAgent, extraWaitMs, cookiesText, saveImages, saveMedia } = req.body || {};
+  const { url, depth, userAgent, extraWaitMs, cookiesText, saveImages, saveMedia, force } = req.body || {};
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'A url is required.' });
   }
@@ -210,7 +257,7 @@ app.post('/api/archive', async (req, res) => {
   // Skip a genuine re-capture only for a plain, unconfigured repeat request (an accidental
   // double-submit, or a feed re-polling the same link) - any explicit User-Agent/wait/cookies
   // signals real intent to get a fresh capture, so those always go through.
-  if (!selectedUserAgent && selectedExtraWaitMs == null && !cookies) {
+  if (force !== true && !selectedUserAgent && selectedExtraWaitMs == null && !cookies) {
     try {
       const recent = await findRecentArchive(ARCHIVE_DIR, target, DEDUP_WINDOW_MS);
       if (recent) {
@@ -423,7 +470,7 @@ app.get('/api/sites/:domain', async (req, res) => {
 
 app.get('/api/search', async (req, res) => {
   try {
-    res.json(await searchArchives(ARCHIVE_DIR, String(req.query.q || '')));
+    res.json(await searchArchives(ARCHIVE_DIR, String(req.query.q || ''), { timeline: req.query.scope === 'timeline' }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -491,6 +538,36 @@ app.post('/api/archives/delete', async (req, res) => {
   }
 });
 
+app.post('/api/archives/organize', async (req, res) => {
+  const { dirs, action, value } = req.body || {};
+  try {
+    const count = await organizeArchives(ARCHIVE_DIR, dirs, action, value);
+    res.json({ count });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+function sendArchiveZip(res, zip, prefix) {
+  const filename = `${prefix}-${new Date().toISOString().slice(0, 10)}.zip`;
+  res.set({
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+  });
+  res.send(zip.toBuffer());
+}
+
+app.post('/api/archives/export', async (req, res) => {
+  try {
+    const archives = await resolveSelectedArchives(ARCHIVE_DIR, req.body?.dirs);
+    const zip = new AdmZip();
+    for (const { dir, absolute } of archives) zip.addLocalFolder(absolute, dir);
+    sendArchiveZip(res, zip, 'timecapsule-selection');
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 app.get('/api/export', async (req, res) => {
   if (!fs.existsSync(ARCHIVE_DIR)) {
     return res.status(404).json({ error: 'Nothing archived yet.' });
@@ -499,13 +576,7 @@ app.get('/api/export', async (req, res) => {
   try {
     const zip = new AdmZip();
     zip.addLocalFolder(ARCHIVE_DIR);
-    const buffer = zip.toBuffer();
-    const filename = `timecapsule-export-${new Date().toISOString().slice(0, 10)}.zip`;
-    res.set({
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    });
-    res.send(buffer);
+    sendArchiveZip(res, zip, 'timecapsule-export');
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
