@@ -53,9 +53,9 @@ USER_HOME="$(CDPATH= cd -P -- "$HOME" && pwd -P)" || die "Cannot resolve the cur
 
 # A bind mount can share the same device number as the checkout. Check mount
 # targets explicitly before removal and also constrain the final recursive rm.
-MOUNTS="$(findmnt --list --noheadings --raw --output TARGET)" || die "Cannot check for mounted data."
+MOUNTS="$(findmnt --noheadings --raw --output TARGET)" || die "Cannot check for mounted data."
 while IFS= read -r target; do
-  target="$(printf '%b' "$target")"
+  printf -v target '%b' "$target"
   if [[ "$target" == "$PROJECT_DIR" || "$target" == "$PROJECT_DIR/"* ]]; then
     die "Mounted path found at $target. Unmount it and handle its data separately before uninstalling."
   fi

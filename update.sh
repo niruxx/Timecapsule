@@ -234,7 +234,7 @@ main() {
   local count
   count="$(git rev-list --count "$OLD_HEAD..$NEW_HEAD")"
   info "$count new commit(s) on $upstream:"
-  git log --no-decorate -n 15 --format='        %h %s' "$OLD_HEAD..$NEW_HEAD"
+  git --no-pager log --no-decorate -n 15 --format='        %h %s' "$OLD_HEAD..$NEW_HEAD"
   if (( count > 15 )); then info "        ... and $(( count - 15 )) more"; fi
 
   if (( CHECK_ONLY )); then
@@ -274,10 +274,10 @@ main() {
       git stash pop --quiet >/dev/null 2>&1 || true
       die "Your local edits conflict with the new version, so the update was NOT applied - everything is exactly as it was.
     Your edits are still in place. To take the update anyway:
-      1. Note your changes:   git diff
+      1. Note your changes:   git --no-pager diff
       2. Set them aside:      git stash
       3. Update:              bash update.sh
-      4. Re-apply by hand:    git stash show -p | less     (then edit config.js to taste; 'git stash drop' when done)"
+      4. Re-apply by hand:    git --no-pager stash show -p     (then edit config.js to taste; 'git stash drop' when done)"
     fi
   fi
   ok "Now at $(short HEAD)"
