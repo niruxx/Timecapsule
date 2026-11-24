@@ -23,6 +23,8 @@ const defaults = {
   // a slot frees, rather than being rejected - see lib/semaphore.js. Raise this on a beefier
   // machine, lower it on something like a Raspberry Pi.
   MAX_CONCURRENT_ARCHIVES: 10,
+  MAX_CAPTURE_SECONDS: 1800,
+  ENABLE_OCR: false,
 
   // How many video/audio downloads (each a real yt-dlp subprocess) run at once within a single
   // page's media pass. Independent of MAX_CONCURRENT_ARCHIVES.

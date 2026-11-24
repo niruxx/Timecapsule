@@ -50,6 +50,8 @@ These screenshots show the previous interface and its capture workflows.
 - [Screenshots](#screenshots)
 - [Features](#features)
 - [Organizing and importing captures](#organizing-and-importing-captures)
+- [Replaying and comparing captures](#replaying-and-comparing-captures)
+- [Capture operations](#capture-operations)
 - [Roadmap](#roadmap)
 - [Installing](#installing)
 - [Uninstalling](#uninstalling)
@@ -94,7 +96,7 @@ These screenshots show the previous interface and its capture workflows.
 | **Bulk capture** | Paste a URL list or load a browser bookmarks HTML export. Preview new, existing, and duplicate entries before capturing. |
 | **Browser save and quick actions** | Use the bookmarklet to bring the page you’re viewing into TimeCapsule. Open quick actions with Ctrl+K or Command+K. |
 | **URL canonicalization & dedup** | Incoming URLs are normalized (tracking params like `utm_*`/`fbclid` stripped, host lowercased, trailing slash and fragment removed) before archiving, so the same article reached through different tracking links is recognized as the same page. A plain, unconfigured re-request for a URL archived in the last 5 minutes reuses that snapshot instead of re-capturing — an explicit User-Agent, extra wait, or cookies always forces a fresh capture, though. |
-| **Change detection & text diffs** | Re-archiving a URL you've saved before compares its new article text against the last time, flagging "changed" with a line-level +/− count and a "View Changes" button in the viewer that opens a real word-level diff (insertions/deletions highlighted). Only compares article-like main pages, not incidental sub-links. |
+| **Change detection & text diffs** | Re-archiving a URL compares its text with the previous snapshot. Review added and removed lines and compare two captures in the viewer. |
 | **Library** | A thumbnail grid of every archived site; click through to a Wayback-Machine-style calendar of every date it was archived. Delete a single day's snapshots from the calendar, or an entire site's history from the grid. |
 | **Export / Import** | Back up everything to a single `.zip` and restore it later — including onto a different OS. |
 | **Wayback Machine import** | Look up a URL's existing snapshots on web.archive.org (via the CDX API) and import one directly - it goes through the exact same capture pipeline as a live archive (PDF, screenshot, WARC, article extraction) via a real browser render of the fetched HTML, and is filed under the date it was *actually* captured on the web, not today. Pasting a `web.archive.org/web/...` link straight into the main Archive bar is also recognized and routed the same way. See [Importing from the Wayback Machine](#importing-from-the-wayback-machine). |
@@ -108,6 +110,22 @@ These screenshots show the previous interface and its capture workflows.
 - Use **Save search** to bookmark the history query, filters, and sort order on this browser. Capture tags and collection membership travel with the snapshots in a ZIP backup.
 - Choose **Bulk capture** to paste a list or upload a browser bookmarks HTML file. Review up to 200 URLs per batch. Repeated URLs within a batch are skipped, and you can choose to capture previously saved URLs again. A batch captures one page per URL and can file the results in a collection. Keep the TimeCapsule tab open while a batch runs.
 - Choose **Browser save** and drag the bookmarklet to your bookmarks bar. Use it on a web page to open TimeCapsule with that page’s URL filled in, then choose your capture settings and save.
+
+## Replaying and comparing captures
+
+Open a snapshot to switch between its saved HTML, PDF, screenshot, Reader, and WARC views. The format bar shows which files are available. WARC replay renders captured HTML with saved images, styles, and fonts offline. It runs with scripts disabled and may omit resources whose response bodies were unavailable when the page was captured.
+
+Choose **Compare versions** to select two captures of the same URL. The viewer shows the screenshots and saved text side by side and highlights text changes. Older captures can use their thumbnail and text extracted from the saved HTML. Open **Calendar** from the sidebar to browse captures across the archive by date and see which ones changed.
+
+## Capture operations
+
+- **Jobs** shows queued, running, completed, failed, and cancelled captures with their latest stage. Cancel unfinished jobs or retry a failed or cancelled capture from the dashboard. Queued jobs resume after a restart. A capture interrupted while running can be retried. Captures submitted with cookies need a fresh cookie file after a restart.
+- **Schedules** runs recurring captures of a URL on the server. The schedule retains its next run and can be paused or run immediately. Review the URL’s capture history and in-app notifications for changes or failures.
+- **Storage** reports disk use by format. Preview a retention rule by age and optional site, then confirm deletion of the listed snapshots. The preview expires after five minutes.
+- **Failed assets** in the viewer lists network and HTTP failures recorded during capture. Retrying a resource saves a separate downloadable file beside the original snapshot.
+- Set `ENABLE_OCR` to `true` and install Tesseract on the server to index screenshot text after capture. OCR runs one screenshot at a time with a two-minute timeout. [Tesseract](https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html)
+
+For smaller hosts, set `MAX_CONCURRENT_ARCHIVES` to `1` and tune `MAX_CAPTURE_SECONDS` in `config.json`. If you use systemd, you can also set `CPUQuota`, `MemoryHigh`, and `MemoryMax` in a service drop-in to cap the resource use of TimeCapsule and its capture processes. [systemd resource controls](https://freedesktop.org/software/systemd/man/latest/systemd.resource-control.html)
 
 ## Roadmap
 
@@ -279,7 +297,51 @@ TimeCapsule is a plain Node/Express process — any host that can run a long-liv
    ```
    If you plan to use [recursive archiving](#recursive-archiving) on larger sites, raise your proxy's read/response timeout (e.g. nginx's `proxy_read_timeout`) — the request to `/api/archive` doesn't return until the whole crawl finishes, and a big one can take a while.
 4. **Persist the `archived/` directory.** It holds every saved archive, so back it up like you would a database and, if you containerize the app, mount it as a volume rather than baking it into the image.
-5. **Access control.** TimeCapsule has no authentication of its own — anything reachable can trigger an archive and browse `archived/`. If exposing it beyond your local network, put it behind your reverse proxy's auth (e.g. Caddy's `basic_auth`, an nginx `auth_basic` block, or a VPN/tailnet) rather than the open internet.
+5. **Access control.** Configure [shared access](#shared-access) to require a login, and serve TimeCapsule through HTTPS. Use a VPN or firewall to limit who can reach a personal instance.
+
+### Shared access
+
+Set `TIMECAPSULE_USERS_FILE` to the absolute path of a JSON accounts file outside the archive. Restart TimeCapsule after changing the file. Accounts use HTTP Basic authentication, so terminate TLS at the reverse proxy and preserve the original `Host` header. With no accounts file configured, the instance uses its existing single-user mode without a login.
+
+```json
+[
+  { "username": "operator", "role": "admin", "passwordHash": "<generated hash>" },
+  { "username": "collector", "role": "capture", "passwordHash": "<generated hash>" },
+  { "username": "reviewer", "role": "reader", "passwordHash": "<generated hash>", "collections": ["Research"] }
+]
+```
+
+- **Admin** can manage snapshots, schedules, backups, retention, and public mirrors.
+- **Capture** can browse the archive, submit new captures, and manage their own capture jobs.
+- **Reader** can browse and replay snapshots in assigned collections. Use collection names exactly as they appear in the workspace. Raw WARC downloads are reserved for administrators in shared mode.
+
+Generate a separate hash for each account. This Bash command reads the password without echoing it and prints the hash for the JSON file.
+
+```bash
+read -rsp 'Password: ' tc_password
+printf '\n' >&2
+printf '%s' "$tc_password" | node -e '
+  const fs = require("node:fs");
+  const { randomBytes, scryptSync } = require("node:crypto");
+  const salt = randomBytes(16);
+  const password = fs.readFileSync(0);
+  const hash = scryptSync(password, salt, 64);
+  console.log(["scrypt", salt.toString("hex"), hash.toString("hex")].join("$"));
+'
+unset tc_password
+```
+
+### Archive storage and S3
+
+TimeCapsule uses a writable filesystem as its working archive. To store captures on SMB or NFS, mount the share persistently, set `TIMECAPSULE_ARCHIVE_DIR` to its mount path, and grant the TimeCapsule service account read and write access. Start the service after the mount is available. For systemd you can use `RequiresMountsFor=/path/to/archive` in the unit. Keep `data/` on local disk and run one writer per archive.
+
+To use S3, install AWS CLI v2 for the service account, configure its credentials, and set `TIMECAPSULE_S3_URI=s3://bucket/prefix`. For an S3-compatible provider, also set `TIMECAPSULE_S3_ENDPOINT`. Set `TIMECAPSULE_S3_REPLICATE=1` to replicate new captures and organization changes under `captures/`. [AWS CLI S3 sync](https://docs.aws.amazon.com/cli/latest/reference/s3/sync.html)
+
+Create a complete checkpoint under **Operations → Storage → Back up to S3**. Checkpoints include snapshot files and their organization metadata. Verify a backup by restoring it from **Operations → Storage** on a separate instance with an empty archive directory on a writable filesystem. TimeCapsule checks each downloaded file against the saved SHA-256 manifest before activating the restore. For a mounted share, use a local restore directory and copy the verified archive to the share while its service is stopped. Keep a separate backup of local configuration, account files, and `data/` if you also need schedules and job history.
+
+### Public mirrors
+
+Set `TIMECAPSULE_WAYBACK_KEY` and `TIMECAPSULE_WAYBACK_SECRET` to the Internet Archive API credentials. An admin can then opt in an individual collection under **Operations → Public mirrors**. Future captures filed into that collection submit the original URL to the public Wayback Machine. TimeCapsule skips Wayback imports and captures marked as using imported session cookies. The dashboard records the submission receipt. Disable the setting to stop future submissions. [Internet Archive Save Page Now integration](https://github.com/internetarchive/openlibrary/blob/master/openlibrary/core/ia.py)
 
 ### Docker (optional)
 
@@ -402,9 +464,9 @@ If the API call fails for any reason (rate limit, network error, no credit) the 
 
 ### Change detection
 
-Re-archiving a URL you've already saved compares the new capture's article text against the most recent *previous* archive of that same URL (any age - not the 5-minute dedup window above) and stores how many lines were added/removed. Scoped to the URL you actually typed, not incidental sub-links swept up along the way, and only when both captures look like articles.
+Re-archiving a URL compares it with the most recent previous snapshot. TimeCapsule compares article text when both snapshots have it and falls back to text extracted from the saved HTML. It records how many lines were added and removed on the main capture.
 
-When something changed, the viewer shows a small banner (`+N / -M lines`) with a **View Changes** button - it opens a word-level diff (`GET /api/diff?from=<dir>&to=<dir>`, built with the [`diff`](https://github.com/kpdecker/jsdiff) package) with insertions and deletions highlighted. This is a text diff, not a pixel/visual one - comparing two snapshots' screenshots image-by-image is a separate, still-unbuilt roadmap item ("side-by-side visual diff viewer").
+When text changes, the viewer shows the line counts and offers **View Changes** for a word-level diff. Use **Compare versions** to see both screenshots and text together.
 
 ### Directory layout
 
@@ -448,7 +510,7 @@ To move to a different OS: click Export on the old machine, copy the `.zip` over
 
 ### Concurrency
 
-By default, up to `MAX_CONCURRENT_ARCHIVES` (2) archive/import jobs run their actual browser work at the same time - a third request kicked off while both slots are busy shows as "Queued" in its progress indicator and starts automatically the moment a slot frees, rather than blocking your request or being rejected. This is a fixed job-count cap, not a real resource scheduler (no CPU/RAM awareness) - see the [Roadmap](#roadmap) for the fuller worker-queue version.
+The server runs up to `MAX_CONCURRENT_ARCHIVES` captures or imports at once. Additional jobs wait for a slot and appear in the Operations dashboard. The default is ten concurrent jobs. Use a lower value on a small host and set `MAX_CAPTURE_SECONDS` to limit how long a running capture can hold a slot.
 
 This, and everything else in `config.js`, is deliberately a server file rather than a website setting - restart required to change it - since these are all operator decisions (what this machine's hardware can handle, how the homepage looks for everyone hitting it), not something to expose as a per-visitor control. These are the defaults; to change any of them, put just the ones you want in a `config.json` instead of editing this file - see [Settings file (config.json)](#settings-file-configjson):
 
@@ -530,7 +592,9 @@ Anything listed as living in `config.js` can be overridden without touching that
 | Dedup window | `5` minutes | `server.js` (`DEDUP_WINDOW_MS`) | How recently a plain, unconfigured re-request for the same URL must have been archived to be served from that snapshot instead of re-captured |
 | Human verification timeout | `10` minutes | `lib/archiver.js` (`VERIFY_TIMEOUT_MS`) | How long the visible hand-off browser window waits for you to clear a bot-check before giving up and failing the archive |
 | Finished job retention | `10` minutes | `lib/jobs.js` (`JOB_TTL_MS`) | How long a completed/errored/stopped job's status stays queryable via `GET /api/archive/:jobId/events` before it's forgotten |
-| `MAX_CONCURRENT_ARCHIVES` | `2` | `config.js` | Archive/import jobs allowed to run their Puppeteer work at once - see [Concurrency](#concurrency) |
+| `MAX_CONCURRENT_ARCHIVES` | `10` | `config.js` | Capture/import jobs allowed to run at once |
+| `MAX_CAPTURE_SECONDS` | `1800` | `config.js` | Time limit for a running capture or import |
+| `ENABLE_OCR` | `false` | `config.js` | Index screenshot text after capture with Tesseract |
 | `MAX_CONCURRENT_MEDIA_DOWNLOADS` | `2` | `config.js` | yt-dlp downloads allowed to run at once within a single page's media pass |
 | `SHOW_TIMELINE_FEED` | `true` | `config.js` | Whether the "Today"/"Yesterday" recent-snapshots feed shows on the homepage |
 | `ENABLE_ANIMATED_BACKGROUND` | `true` | `config.js` | Whether the capture panel illustration animates |

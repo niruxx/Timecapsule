@@ -51,6 +51,8 @@
     <nav class="workspace-nav" aria-label="Workspace">
       <div class="nav-label">Workspace</div>
       <button id="timeline-btn" class="nav-item" type="button" aria-current="page"><svg class="ui-icon" aria-hidden="true"><use href="#i-clock"></use></svg><span>Timeline</span></button>
+      <button id="calendar-btn" class="nav-item" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-clock"></use></svg><span>Calendar</span></button>
+      <button id="operations-btn" class="nav-item" type="button" hidden><svg class="ui-icon" aria-hidden="true"><use href="#i-stack"></use></svg><span>Operations</span></button>
       <button id="snapshots-btn" class="nav-item" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-library"></use></svg><span>Library</span></button>
       <button id="tags-btn" class="nav-item" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-tag"></use></svg><span>Tags</span></button>
       <button id="collections-btn" class="nav-item" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-folder"></use></svg> <span>Collections</span></button>
@@ -270,8 +272,16 @@
     <span id="viewer-change-text"></span>
     <button type="button" id="viewer-change-btn" class="btn-tonal" hidden>View Changes</button>
   </div>
+  <div class="replay-toolbar">
+    <div class="replay-formats" id="replay-formats" role="group" aria-label="Snapshot format"></div>
+    <button id="compare-versions" class="btn-tonal" type="button" hidden>Compare versions</button>
+    <button id="snapshot-assets" class="btn-tonal" type="button" hidden>Failed assets</button>
+  </div>
+  <p id="replay-notice" class="replay-notice" role="status"></p>
   <div class="viewer-stage">
     <img id="viewer-img" alt="" hidden><p id="viewer-placeholder" hidden>No preview available. Open a saved format to view the snapshot.</p>
+    <iframe id="replay-frame" title="Archived content" sandbox hidden></iframe>
+    <pre id="replay-reader" hidden></pre>
   </div>
 </div>
 
@@ -303,5 +313,7 @@
 
 <script src="app.js"></script>
 <script src="workspace.js"></script>
+<script src="replay.js"></script>
+<script src="operations.js"></script>
 </body>
 </html>

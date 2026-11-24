@@ -822,7 +822,7 @@ finish() {
   info "Your archives live in $PROJECT_DIR/archived, alongside data/, bin/ and traffic.log."
   info "None of those are ever touched by updates - back up archived/ (or use Export in the UI)."
   printf '\n'
-  warn "TimeCapsule has no login of its own and listens on every network interface."
+  warn "TimeCapsule listens on every network interface. Configure shared access to require a login."
   warn "If this machine is reachable beyond your own network, put it behind a firewall, VPN or an"
   warn "authenticating reverse proxy - see \"Hosting as a Server\" in the README."
   if (( ! BROWSER_OK )); then

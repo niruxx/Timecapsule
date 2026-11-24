@@ -648,12 +648,16 @@ if (incomingCapture && /^https?:\/\//i.test(incomingCapture)) {
 
 function openCommandPalette() {
   const commands = [
-    { label: 'Archive a URL', icon: 'plus', run: () => input.focus() },
+    ...(canCaptureArchive ? [{ label: 'Archive a URL', icon: 'plus', run: () => input.focus() }] : []),
     { label: 'Search your archive', icon: 'search', run: () => searchInput.focus() },
     { label: 'Open Library', icon: 'library', run: () => snapshotsBtn.click() },
     { label: 'Open Collections', icon: 'folder', run: showCollections },
     { label: 'Open saved searches', icon: 'bookmark', run: showSavedSearches },
-    { label: 'Bulk capture', icon: 'stack', run: showBatchDialog },
+    { label: 'Archive calendar', icon: 'clock', run: () => document.getElementById('calendar-btn').click() },
+    ...(canCaptureArchive ? [
+      { label: 'Bulk capture', icon: 'stack', run: showBatchDialog },
+      { label: 'Capture operations', icon: 'stack', run: () => document.getElementById('operations-btn').click() },
+    ] : []),
   ];
   showWorkspaceDialog('Quick actions', `
     <div class="workspace-dialog-content">
@@ -665,7 +669,7 @@ function openCommandPalette() {
   function updateCommands() {
     const text = query.value.trim();
     let options = commands.filter(({ label }) => label.toLowerCase().includes(text.toLowerCase()));
-    if (/^https?:\/\//i.test(text)) {
+    if (canCaptureArchive && /^https?:\/\//i.test(text)) {
       options = [{ label: 'Use this URL for capture', icon: 'plus', run: () => {
         input.value = text;
         input.dispatchEvent(new Event('input'));

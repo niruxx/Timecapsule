@@ -73,6 +73,8 @@ const diffClose = document.getElementById('diff-close');
 const diffBody = document.getElementById('diff-body');
 const viewerClose = document.getElementById('viewer-close');
 const viewerDelete = document.getElementById('viewer-delete');
+let canManageArchive = true;
+let canCaptureArchive = true;
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -339,7 +341,7 @@ viewerImg.addEventListener('error', () => {
 
 function openViewer(entry) {
   viewerEntry = entry;
-  document.getElementById('viewer-organize').hidden = entry.dir.split('/').length !== 2;
+  document.getElementById('viewer-organize').hidden = !canManageArchive || entry.dir.split('/').length !== 2;
   viewerTitle.textContent = entry.title || '';
   viewerTitle.hidden = !entry.title;
   viewerUrl.textContent = entry.url;
@@ -358,7 +360,8 @@ function openViewer(entry) {
   viewerArticle.href = entry.article ? archivePath(entry.article) : '#';
   viewerArticle.hidden = !entry.article;
   viewerWarc.href = entry.warc ? archivePath(entry.warc) : '#';
-  viewerWarc.hidden = !entry.warc;
+  viewerWarc.hidden = !entry.warc || !canManageArchive;
+  viewerDelete.hidden = !canManageArchive;
 
   const media = entry.media || [];
   viewerMedia.hidden = !media.length;
@@ -382,12 +385,14 @@ function openViewer(entry) {
   }
 
   showModal(viewer, viewerClose);
+  loadReplay(entry);
 }
 
 viewerChangeBtn.addEventListener('click', () => showDiff(viewerEntry.previousArchiveDir, viewerEntry.dir));
 
 async function showDiff(fromDir, toDir) {
   showModal(diffOverlay, diffClose);
+  document.getElementById('diff-title').textContent = 'Changes since last archive';
   diffBody.innerHTML = '<div class="dialog-loading">Loading…</div>';
 
   try {
@@ -417,6 +422,7 @@ diffOverlay.addEventListener('click', (e) => {
 });
 
 function closeViewer() {
+  clearReplay();
   hideModal(viewer);
   viewerImg.removeAttribute('src');
   viewerEntry = null;
@@ -1273,6 +1279,10 @@ async function applySettings() {
     const res = await fetch('/api/settings');
     const settings = await res.json();
 
+    document.body.dataset.role = settings.role || 'admin';
+    canManageArchive = document.body.dataset.role === 'admin';
+    canCaptureArchive = document.body.dataset.role !== 'reader';
+    document.getElementById('operations-btn').hidden = !canCaptureArchive;
     activity.hidden = settings.showTimeline === false;
     document.querySelector('.capture-art').classList.toggle('animate', settings.enableAnimatedBackground !== false);
 

@@ -6,9 +6,9 @@ TimeCapsule’s core workflow is to capture a URL, find it again, and open the b
 | --- | --- | --- |
 | 1. Archive workspace | Capture and browse snapshots from a consistent desktop and mobile interface | Implemented |
 | 2. Organization and intake | Organize larger archives and save links in batches | Implemented |
-| 3. Replay and comparison | Read, replay, and compare versions from one snapshot workspace | Planned |
-| 4. Capture operations | Manage capture jobs, recurring checks, and storage from the UI | Planned |
-| 5. Hosting and access | Support more storage options and shared instances | Planned |
+| 3. Replay and comparison | Read, replay, and compare versions from one snapshot workspace | Implemented |
+| 4. Capture operations | Manage capture jobs, recurring checks, and storage from the UI | Implemented |
+| 5. Hosting and access | Support more storage options and shared instances | Implemented |
 
 ## Phase 1 — Archive workspace
 
@@ -29,27 +29,27 @@ TimeCapsule’s core workflow is to capture a URL, find it again, and open the b
 
 ## Phase 3 — Replay and comparison
 
-- [ ] Add a format switcher for HTML, PDF, screenshot, reader view, and WARC replay where available.
-- [ ] Add an archive-wide calendar with capture counts and change indicators.
-- [ ] Let users choose two captures of the same URL and compare text and screenshots side by side.
-- [ ] Show available formats, missing assets, and comparable versions on older snapshots.
+- [x] Add a format switcher for HTML, PDF, screenshot, Reader, and offline WARC replay where available.
+- [x] Add an archive-wide calendar with capture counts and change indicators.
+- [x] Let users choose two captures of the same URL and compare text and screenshots side by side.
+- [x] Show available formats and comparable versions on older snapshots, plus failed assets where a report was recorded.
 
 **Exit criteria.** A user can find two versions of a page, inspect their differences, and open available formats without leaving the snapshot workflow.
 
 ## Phase 4 — Capture operations
 
-- [ ] Build a job dashboard with queued, running, completed, and failed captures, cancellation, retry, and stage details.
-- [ ] Persist the job queue and add resource limits for smaller hosts. Run optional OCR indexing after capture completes.
-- [ ] Add scheduled recapture with change notifications and a per-URL history.
-- [ ] Report storage usage by format, preview retention rules, and report failed assets with a targeted retry option.
+- [x] Build a job dashboard with queued, running, completed, and failed captures, cancellation, retry, and stage details.
+- [x] Persist the job queue, configure concurrency and capture time limits, and support optional background screenshot OCR.
+- [x] Add scheduled recapture with in-app change notifications and a per-URL history.
+- [x] Report storage usage by format, preview retention rules, and report failed assets with a targeted retry option.
 
 **Exit criteria.** A queued capture survives a server restart, and operators can diagnose failures, review changes, and preview cleanup from the dashboard.
 
 ## Phase 5 — Hosting and access
 
-- [ ] Add S3-compatible storage and document SMB/NFS deployments, including backup and restore verification.
-- [ ] Add user roles for capture, administration, and read-only collection access.
-- [ ] Add opt-in mirroring to external public archives with a per-collection publishing setting.
+- [x] Add S3-compatible checkpoint backups, optional snapshot replication, and SHA-256-verified restore. Document SMB/NFS mounts for the working archive.
+- [x] Add user roles for capture, administration, and read-only collection access.
+- [x] Add opt-in public Wayback mirroring with a per-collection publishing setting.
 
 **Exit criteria.** An operator can restore a backup onto a supported storage target and verify that read-only accounts can browse their assigned collections.
 
