@@ -5,7 +5,7 @@
 
 **A self-hosted, open-source alternative to Archive.org and ArchiveBox.** Paste a URL into the address bar and TimeCapsule renders it in headless Chrome, then saves a real, self-contained HTML snapshot, a PDF, and a thumbnail — all on your own disk, under your own control.
 
-The UI is a Google Photos-Fporstyle timeline: every snapshot you've ever taken, grouped by day, in one scrollable grid — click any thumbnail to open it full-screen.
+Use the archive workspace to save a URL, search saved pages, and browse day-grouped captures in grid or list view. The Library organizes captures by site and date.
 
 ## AI usage disclaimer
 
@@ -19,6 +19,8 @@ The UI is a Google Photos-Fporstyle timeline: every snapshot you've ever taken, 
 Features like the bot-check hand-off, Wayback link auto-import, and cancellable background jobs with live progress aren't things ArchiveBox or a `wget --mirror` script does. AI assistance is what made building this specific, non-standard feature set practical for a one-person project.
 
 ## Screenshots
+
+These screenshots show the previous interface and its capture workflows.
 
 <table>
 <tr>
@@ -49,6 +51,7 @@ Features like the bot-check hand-off, Wayback link auto-import, and cancellable 
 - [Features](#features)
 - [Roadmap](#roadmap)
 - [Installing](#installing)
+- [Uninstalling](#uninstalling)
 - [Running on a Workstation](#running-on-a-workstation)
 - [Managing the Service](#managing-the-service)
 - [Hosting as a Server](#hosting-as-a-server)
@@ -81,51 +84,23 @@ Features like the bot-check hand-off, Wayback link auto-import, and cancellable 
 | **Media extractor** | Downloads any video/audio TimeCapsule can find on the page (native `<video>`/`<audio>`, or a YouTube/Vimeo embed) via a lazily-downloaded [yt-dlp](https://github.com/yt-dlp/yt-dlp) binary, saved under `media/` in the archive folder. Best-effort — unsupported sites, oversized files, or pages with no media are silently skipped rather than failing the archive. Can be hard-disabled instance-wide via `ENABLE_MEDIA_DOWNLOADS` in `config.js`. |
 | **Full-page screenshot** | A separate `screenshot.png` capturing the *entire* rendered page top to bottom (not just the viewport-sized thumbnail used in the grids) — for citations, visual records, or just seeing the whole page at a glance without opening the HTML. Shown as an "Open Screenshot" button wherever a snapshot appears. |
 | **Clean article extraction** | Every archive also runs [Readability.js](https://github.com/mozilla/readability) against the page and, when it looks like an article, saves a clean Markdown (`article.md`) and plain-text (`article.txt`) copy alongside it — byline, excerpt, and title included — with ads, nav, and cookie banners stripped out. Shows up as an "Open Article" button next to Open HTML / Open PDF wherever a snapshot appears. |
-| **Timeline** | Every snapshot you've ever taken, newest first, grouped into "Today" / "Yesterday" / dated sections — just like Google Photos. Click a thumbnail to open it full-screen in a lightbox, with Open HTML / Open PDF / Delete right there. |
+| **Timeline** | Browse captures grouped by day in grid or list view. Filter by site or format and open any snapshot from its card. |
 | **Archive depth** | Choose how wide each archive run goes: just this page, this page plus its outbound links (the default), or a full recursive crawl of the whole site (warns you first — it's much heavier). See [Archive depth](#archive-depth). |
 | **Full-text search** | Search reaches inside every archived page's actual content, not just its URL — an embedded [SQLite FTS5](https://www.sqlite.org/fts5.html) index (`data/search.db`, self-healing: rebuilt for anything missing from it on startup) is checked alongside the existing URL/domain matching, with a highlighted snippet shown for content-only matches. If the native SQLite binding can't load on your platform, search silently falls back to URL/domain-only rather than breaking. |
 | **AI summaries & tags** *(optional)* | When `ANTHROPIC_API_KEY` is set, every article-like archive gets a 2–3 sentence summary, a handful of topical tags, and named entities via the Claude API, shown right in the viewer. Off by default (it's the one feature that adds real per-archive latency) — nothing changes until you set the env var. See [AI summaries & tags](#ai-summaries--tags). |
-| **Tags (Smart Collections)** | Browse every archive by AI-generated tag from a "Tags" button in the top bar (only appears once at least one archive has a tag). Click a tag to see every snapshot carrying it, across every site. |
+| **Tags (Smart Collections)** | Browse every archive by AI-generated tag from the "Tags" button in the sidebar (only appears once at least one archive has a tag). Click a tag to see every snapshot carrying it, across every site. |
 | **URL canonicalization & dedup** | Incoming URLs are normalized (tracking params like `utm_*`/`fbclid` stripped, host lowercased, trailing slash and fragment removed) before archiving, so the same article reached through different tracking links is recognized as the same page. A plain, unconfigured re-request for a URL archived in the last 5 minutes reuses that snapshot instead of re-capturing — an explicit User-Agent, extra wait, or cookies always forces a fresh capture, though. |
 | **Change detection & text diffs** | Re-archiving a URL you've saved before compares its new article text against the last time, flagging "changed" with a line-level +/− count and a "View Changes" button in the viewer that opens a real word-level diff (insertions/deletions highlighted). Only compares article-like main pages, not incidental sub-links. |
 | **Library** | A thumbnail grid of every archived site; click through to a Wayback-Machine-style calendar of every date it was archived. Delete a single day's snapshots from the calendar, or an entire site's history from the grid. |
 | **Export / Import** | Back up everything to a single `.zip` and restore it later — including onto a different OS. |
 | **Wayback Machine import** | Look up a URL's existing snapshots on web.archive.org (via the CDX API) and import one directly - it goes through the exact same capture pipeline as a live archive (PDF, screenshot, WARC, article extraction) via a real browser render of the fetched HTML, and is filed under the date it was *actually* captured on the web, not today. Pasting a `web.archive.org/web/...` link straight into the main Archive bar is also recognized and routed the same way. See [Importing from the Wayback Machine](#importing-from-the-wayback-machine). |
 | **Concurrent archiving** | More than one archive/import job can run its Puppeteer work at once (capped at `MAX_CONCURRENT_ARCHIVES` in `config.js`, default 2) - extra requests queue and start automatically as a slot frees, rather than blocking or getting rejected. Media downloads within a page's media pass run concurrently too (`MAX_CONCURRENT_MEDIA_DOWNLOADS`). |
-| **Dark mode** | Follows your system theme by default; toggle it manually from the top bar. The animated background changes mood with it — soft pastels in light mode, a glowing aurora in dark mode. |
+| **Dark mode** | Follows the system theme by default and remembers a manual choice from the header. |
 | **Logging** | Prints progress to the terminal as pages are archived, and appends every archive request (URL + requester IP) to `traffic.log`. |
 
 ## Roadmap
 
-Planned improvements — not yet implemented, listed here to track direction. (WARC capture and cookie/User-Agent handling used to be listed here too; both now ship — see the Features table above. WACZ packaging and stealth-plugin anti-bot evasion are deliberately not included: WACZ is just a zipped WARC + index, low-value to add on its own, and stealth plugins are a maintenance-heavy arms race that doesn't fit a simple self-hosted tool well.)
-
-**Search, organization & management:**
-
-Full-text search, AI summaries/tags, tag-based browsing, URL canonicalization/dedup, and text-based change detection all now ship — see the Features table above. What's left from this section:
-
-- **OCR search over images** — extract text baked into images (screenshots-of-text, scanned documents, memes) via Tesseract, so a search can match text that never existed anywhere in the DOM. Deliberately not implemented yet: OCR takes real per-image time (seconds, not milliseconds), and running it synchronously in the current one-shot archive flow would make every archive noticeably slower even when nothing in the works. This is a much better fit once the resource-throttled worker queue below exists, so OCR can run as a background job after the archive itself has already completed.
-- **Folder-based organization** — the shipped Smart Collections covers tag-based browsing; grouping by folder or by domain-matching rule is still just tags-only for now.
-- **Side-by-side visual diffs** — the shipped change detection is text-only (word-level, via the `diff` package); comparing two snapshots' *screenshots* pixel-by-pixel is still open, and is really the same underlying feature as the "side-by-side visual diff viewer" listed under UI below.
-
-**System architecture & storage:**
-
-- **Resource-throttled workers** — a concurrency cap now ships (see Features above: `MAX_CONCURRENT_ARCHIVES` in `config.js`), which covers "don't run unbounded jobs at once." Still open: a real queue-based worker architecture (e.g. Redis + Celery, or Go workers) with actual CPU/RAM throttling rather than just a job count limit, for genuinely resource-constrained hardware like a Raspberry Pi.
-- **Storage provider flexibility** — save archived data to local disk, S3-compatible object storage (MinIO, Cloudflare R2, AWS S3), or SMB/NFS network shares, instead of only the local filesystem.
-- **Public archive mirroring (optional)** — a toggle to auto-submit pages to external public archives (Internet Archive's Save Page Now, Archive.today) as an extra backup layer.
-- **Multi-user access control** — role-based permissions allowing public read-only collections while restricting who can trigger archives or change administrative settings.
-
-**UI:**
-
-- **Interactive timeline calendar** — map captures onto a GitHub-style activity heatmap or calendar view, with dots or color codes for HTTP status or whether the content changed that day.
-- **Side-by-side visual diff viewer** — pick two capture dates for a single URL and view a split-screen or sliding-curtain diff, highlighting DOM changes or visual pixel shifts.
-- **Format switcher replay bar** — a top navigation banner on replayed pages for toggling instantly between execution modes: WARC Replay | SingleFile HTML | PDF | Reader View | Screenshot.
-
-**Dashboard & operational UI:**
-
-- **Live job queue & worker monitor** — per-job progress and a cancel button now ship (see Features above) for the single archive you just kicked off; still open is a dashboard view across *multiple concurrent* jobs — a queue list, CPU/RAM utilization per job, and retry.
-- **Quick-add command palette (Cmd+K)** — a global modal, accessible anywhere in the app, to quickly submit URLs, assign tags, or jump directly to archived domains.
-- **Storage breakdowns & cleanup tools** — a pie chart breaking down disk usage by format (WARCs vs. screenshots vs. video files), paired with a "prune rules" interface (e.g. delete screenshots older than 90 days for specific domains).
-- **Broken asset & link checker** — a sub-view highlighting archived pages that failed to fetch sub-resources (missing CSS/fonts, blocked scripts), with options to re-fetch individual assets.
+See [roadmap.md](roadmap.md) for the phased plan covering organization, replay, capture operations, and hosting.
 
 ## Installing
 
@@ -172,6 +147,19 @@ bash update.sh --check  # just report whether an update is available
 ```
 
 `update.sh` never touches your data — `archived/`, `data/`, `bin/` and `traffic.log` aren't tracked by git, and the script never runs `git clean` or a hard reset against them. Your own settings are best kept in [`config.json`](#settings-file-configjson), which git doesn't track, so it's never in the update's way at all. If you've edited a tracked file anyway (typically `config.js`), your edits are set aside and re-applied on top of the new version. If they can't be merged cleanly, the whole update is rolled back and nothing changes — you're never left with half an update or conflict markers in a file the server loads. A failed `npm install` is rolled back the same way, and the service is restarted only if it was running before.
+
+## Uninstalling
+
+On Linux, run the uninstaller as the account that installed TimeCapsule. Export any snapshots you want to keep to a folder outside the checkout, and stop any instance you started directly with `npm start`.
+
+```bash
+bash uninstall.sh --dry-run
+bash uninstall.sh
+```
+
+The script removes matching systemd services and PM2 registrations, then permanently deletes the entire checkout. This includes the source and Git history, saved snapshots, media, the search index, local settings, dependencies, and traffic logs. Use `--yes` for non-interactive removal or `--install-dir PATH` to target a checkout from a separate copy of the script.
+
+Externally managed copies and integrations require separate cleanup. These include mounted archive volumes, exports outside the checkout, Docker deployments, reverse proxies, browser site data, and logs outside the checkout such as the system journal and PM2 logs. Shared system packages and the Puppeteer cache remain available to other applications.
 
 ## Running on a Workstation
 
@@ -238,7 +226,7 @@ pm2 restart timecapsule   # or just re-run `npm start` if you run it in the fore
 
 `npm install` re-checks Puppeteer's bundled Chromium and only re-downloads it if the required version changed. On Linux, `bash update.sh` does all of this for you and handles the systemd service too — see [Linux: install and update scripts](#linux-install-and-update-scripts).
 
-**Backing up:** everything TimeCapsule knows lives under `archived/`. Click Export in the top bar (or hit `GET /api/export`) to download it as a single `.zip` — see [Export and import](#export-and-import) for the full picture, including moving to a different OS entirely.
+**Backing up:** everything TimeCapsule knows lives under `archived/`. Click **Export backup** in the sidebar (or hit `GET /api/export`) to download it as a single `.zip` — see [Export and import](#export-and-import) for the full picture, including moving to a different OS entirely.
 
 **Changing the port:** put `{ "PORT": 8080 }` in `config.json` (see [Running on a custom port](#running-on-a-custom-port)) and restart the service — `pm2 restart timecapsule`, or `sudo systemctl restart timecapsule` for systemd (`systemctl --user restart timecapsule` for a user service). That's the same file whether you run under pm2, systemd or by hand, and updates never overwrite it. The `PORT` environment variable also works and takes priority over `config.json`: with pm2, set it on the first launch (`PORT=8080 pm2 start server.js --name timecapsule`), which pm2 remembers; in a systemd unit it's an `Environment=PORT=8080` line. If a unit already has such a line, `config.json` will appear to be ignored — edit or remove the line instead. Whatever port you choose, update your reverse proxy and firewall to match.
 
@@ -378,7 +366,7 @@ More than one archive/import job can be running at once - see [Concurrency](#con
 
 ### Importing from the Wayback Machine
 
-The clock-arrow icon in the top bar opens an "Import from Wayback Machine" dialog: paste a URL, and `GET /api/wayback/snapshots?url=` (`lib/wayback.js`) queries the Internet Archive's [CDX API](https://archive.org/help/wayback_api.php) for every distinct HTML snapshot it has of that URL (deduped by content digest, newest first). Pick one and `POST /api/wayback/import` fetches that exact snapshot's raw HTML (the documented `id_` modifier - no Wayback toolbar or link-rewriting mixed in) and runs it through the same background-job machinery as a live archive, described above.
+**Wayback Machine** in the sidebar opens an "Import from Wayback Machine" dialog: paste a URL, and `GET /api/wayback/snapshots?url=` (`lib/wayback.js`) queries the Internet Archive's [CDX API](https://archive.org/help/wayback_api.php) for every distinct HTML snapshot it has of that URL (deduped by content digest, newest first). Pick one and `POST /api/wayback/import` fetches that exact snapshot's raw HTML (the documented `id_` modifier - no Wayback toolbar or link-rewriting mixed in) and runs it through the same background-job machinery as a live archive, described above.
 
 Pasting a link copied straight out of the Wayback Machine itself (`web.archive.org/web/<timestamp>/<url>`) into the main **Archive** bar works too - `POST /api/archive` recognizes that shape before it does anything else, pulls out the original URL and timestamp, and routes the request into the same import path instead of dutifully archiving Wayback's own replay page. Depth/User-Agent/cookies/save-toggles on the request are ignored in that case, since there's only ever one page to import; a toast confirms what happened ("Recognized a Wayback Machine link…") since otherwise it'd look like a plain archive.
 
@@ -395,7 +383,7 @@ Two things worth knowing:
 
 Set the `ANTHROPIC_API_KEY` environment variable before starting TimeCapsule and every article-like archive (the same ones that get `article.md`/`article.txt` - see step 3 below) also gets a 2-3 sentence summary, 3-8 topical tags, and any named people/organizations/places, via the [Claude API](https://claude.com/platform/api) (`claude-opus-5`, `lib/ai-enrich.js`). This is the one optional feature that adds real per-archive latency (an API round trip), so unlike everything else in this list it's off unless you explicitly opt in by setting the key - nothing about a normal archive changes until you do.
 
-Once at least one archive has a tag, a **Tags** button appears in the top bar - it opens a tag cloud (every tag in use, with a count), and clicking a tag lists every archive that carries it, across every site. This is also what the roadmap called "Smart Collections": browsing by tag rather than by domain/date like the Library view does.
+Once at least one archive has a tag, a **Tags** button appears in the sidebar - it opens a tag cloud (every tag in use, with a count), and clicking a tag lists every archive that carries it, across every site. This is also what the roadmap called "Smart Collections": browsing by tag rather than by domain/date like the Library view does.
 
 If the API call fails for any reason (rate limit, network error, no credit) the archive still completes normally, just without a summary/tags for that one page.
 
@@ -440,8 +428,8 @@ archived/
 
 Everything TimeCapsule knows is just files under `archived/` — folder and file names use only plain ASCII, so the archive tree itself is already portable across Windows/macOS/Linux. Export/Import just wraps that in a single file for convenience:
 
-- **Export** (top bar, or `GET /api/export`) downloads a `.zip` of the entire `archived/` directory.
-- **Import** (top bar, or `POST /api/import` with the zip as a `multipart/form-data` field named `archive`) extracts that zip into `archived/` on whatever machine you run it on. Existing archives already on that machine are kept — importing merges rather than replaces, so it's also safe to combine two machines' archives into one.
+- **Export backup** (sidebar, or `GET /api/export`) downloads a `.zip` of the entire `archived/` directory.
+- **Import backup** (sidebar, or `POST /api/import` with the zip as a `multipart/form-data` field named `archive`) extracts that zip into `archived/` on whatever machine you run it on. Existing archives already on that machine are kept — importing merges rather than replaces, so it's also safe to combine two machines' archives into one.
 
 To move to a different OS: click Export on the old machine, copy the `.zip` over by whatever means (USB drive, cloud storage, `scp`, etc.), [install](#installing) TimeCapsule on the new machine, start it, and click Import. `data/search.db` deliberately isn't part of the export - it's just an index, not a source of truth, and TimeCapsule backfills it for any imported archive it doesn't recognize the next time it starts (see [Directory layout](#directory-layout)).
 
@@ -458,12 +446,12 @@ module.exports = {
   MAX_CONCURRENT_ARCHIVES: 2,          // simultaneous archive/import jobs
   MAX_CONCURRENT_MEDIA_DOWNLOADS: 2,   // simultaneous yt-dlp downloads within one page's media pass
   SHOW_TIMELINE_FEED: true,            // show the "Today"/"Yesterday" feed on the homepage
-  ENABLE_ANIMATED_BACKGROUND: true,    // the drifting colored blobs behind the homepage
+  ENABLE_ANIMATED_BACKGROUND: true,    // the capture panel illustration
   ENABLE_MEDIA_DOWNLOADS: true,        // master switch for the yt-dlp backend
 };
 ```
 
-Lower `MAX_CONCURRENT_ARCHIVES` on something like a Raspberry Pi (each job is a real headless-Chromium page load); raise it on a beefier machine. Set `SHOW_TIMELINE_FEED: false` if you'd rather the homepage was just the archive bar - everything's still reachable from Library either way, this only hides the inline feed. Set `ENABLE_ANIMATED_BACKGROUND: false` for a plain, static theme background instead of the drifting blobs - purely cosmetic. Set `ENABLE_MEDIA_DOWNLOADS: false` to hard-disable the yt-dlp backend: `lib/media.js` returns immediately without ever downloading the yt-dlp binary or spawning it, even if a request explicitly asks for media, and the "Download video/audio" advanced option is disabled in the UI to match - useful on a locked-down or bandwidth-constrained host.
+Lower `MAX_CONCURRENT_ARCHIVES` on something like a Raspberry Pi (each job is a real headless-Chromium page load); raise it on a beefier machine. Set `SHOW_TIMELINE_FEED: false` if you'd rather the homepage was just the archive bar - everything's still reachable from Library either way, this only hides the inline feed. Set `ENABLE_ANIMATED_BACKGROUND: false` to keep the capture panel illustration still. Set `ENABLE_MEDIA_DOWNLOADS: false` to hard-disable the yt-dlp backend: `lib/media.js` returns immediately without ever downloading the yt-dlp binary or spawning it, even if a request explicitly asks for media, and the "Download video/audio" advanced option is disabled in the UI to match - useful on a locked-down or bandwidth-constrained host.
 
 ### Settings file (config.json)
 
@@ -532,7 +520,7 @@ Anything listed as living in `config.js` can be overridden without touching that
 | `MAX_CONCURRENT_ARCHIVES` | `2` | `config.js` | Archive/import jobs allowed to run their Puppeteer work at once - see [Concurrency](#concurrency) |
 | `MAX_CONCURRENT_MEDIA_DOWNLOADS` | `2` | `config.js` | yt-dlp downloads allowed to run at once within a single page's media pass |
 | `SHOW_TIMELINE_FEED` | `true` | `config.js` | Whether the "Today"/"Yesterday" recent-snapshots feed shows on the homepage |
-| `ENABLE_ANIMATED_BACKGROUND` | `true` | `config.js` | Whether the homepage's drifting background blobs animate |
+| `ENABLE_ANIMATED_BACKGROUND` | `true` | `config.js` | Whether the capture panel illustration animates |
 | `ENABLE_MEDIA_DOWNLOADS` | `true` | `config.js` | Master switch for the yt-dlp backend - `false` hard-disables video/audio download entirely |
 
 ## Requirements

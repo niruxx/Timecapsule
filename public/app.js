@@ -87,7 +87,7 @@ const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  return div.innerHTML.replace(/"/g, '&quot;');
 }
 
 // Full-text search snippets come back from the server with '‹'/'›' marking the matched terms
@@ -99,7 +99,11 @@ function renderSnippet(snippet) {
 }
 
 function thumbStyle(thumbnail) {
-  return thumbnail ? `background-image: url('/archived/${thumbnail}')` : '';
+  return thumbnail ? `background-image: url('${archivePath(thumbnail)}')` : '';
+}
+
+function archivePath(file) {
+  return '/archived/' + file.split('/').map((part) => encodeURIComponent(part).replace(/'/g, '%27')).join('/');
 }
 
 function dayKey(date) {
@@ -121,54 +125,19 @@ function friendlyDate(date) {
   return date.toLocaleDateString(undefined, opts);
 }
 
-/* Material-style ripple on any button press */
-function attachRipple(el) {
-  el.addEventListener('pointerdown', (e) => {
-    const rect = el.getBoundingClientRect();
-    const size = Math.max(rect.width, rect.height);
-    const span = document.createElement('span');
-    span.className = 'ripple';
-    span.style.width = span.style.height = `${size}px`;
-    span.style.left = `${e.clientX - rect.left - size / 2}px`;
-    span.style.top = `${e.clientY - rect.top - size / 2}px`;
-    el.appendChild(span);
-    setTimeout(() => span.remove(), 600);
-  });
-}
-
-function wireRipples(root = document) {
-  root.querySelectorAll('.btn-filled, .btn-tonal, .icon-pill').forEach((el) => {
-    if (el.dataset.rippled) return;
-    el.dataset.rippled = '1';
-    attachRipple(el);
-  });
-}
-
-wireRipples();
-
-/* ============================================================
-   Theme
-   ============================================================ */
-
 const THEME_KEY = 'timecapsule-theme';
-const themeIcon = themeToggle.querySelector('.theme-icon');
 
 function syncThemeToggle(theme) {
-  themeIcon.textContent = theme === 'dark' ? '☀️' : '🌙';
   themeToggle.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
 }
 
-syncThemeToggle(document.documentElement.getAttribute('data-theme') || 'light');
+syncThemeToggle(document.documentElement.dataset.theme);
 
 themeToggle.addEventListener('click', () => {
-  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
   localStorage.setItem(THEME_KEY, next);
-
-  themeIcon.classList.remove('swap');
-  void themeIcon.offsetWidth; // restart the animation
-  themeIcon.classList.add('swap');
-  setTimeout(() => syncThemeToggle(next), 220);
+  syncThemeToggle(next);
 });
 
 /* ============================================================
@@ -186,102 +155,188 @@ function showToast(message, variant = 'success') {
 }
 
 /* ============================================================
-   Timeline — the main Google-Photos-style grid
+   Capture history
    ============================================================ */
 
-function skeletonGrid(n = 8) {
-  return `<div class="tl-group"><div class="tl-grid">${
-    Array.from({ length: n }, () => '<div class="skeleton"></div>').join('')
-  }</div></div>`;
+const activity = document.getElementById('archive-activity');
+const activityCount = document.getElementById('activity-count');
+const timelineControls = document.getElementById('timeline-controls');
+const domainFilter = document.getElementById('domain-filter');
+const formatFilter = document.getElementById('format-filter');
+const viewButtons = timelineControls.querySelectorAll('[data-view]');
+const timelineButton = document.getElementById('timeline-btn');
+const VIEW_KEY = 'timecapsule-timeline-view';
+let timelineEntries = [];
+let timelineRequest = 0;
+
+function icon(name) {
+  return `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 }
 
+function setTimelineView(view) {
+  timelineEl.dataset.view = view;
+  for (const button of viewButtons) {
+    button.setAttribute('aria-pressed', String(button.dataset.view === view));
+  }
+}
+
+setTimelineView(localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid');
+for (const button of viewButtons) {
+  button.addEventListener('click', () => {
+    setTimelineView(button.dataset.view);
+    localStorage.setItem(VIEW_KEY, button.dataset.view);
+  });
+}
+domainFilter.addEventListener('change', renderTimeline);
+formatFilter.addEventListener('change', renderTimeline);
+timelineButton.addEventListener('click', () => window.scrollTo({ top: 0 }));
+
 async function loadTimeline({ skeleton = true } = {}) {
-  if (skeleton && !timelineEl.dataset.loaded) timelineEl.innerHTML = skeletonGrid();
+  const request = ++timelineRequest;
+  timelineEl.setAttribute('aria-busy', 'true');
+  if (skeleton) {
+    timelineEl.innerHTML = '<div class="tl-grid">' + '<div class="skeleton"></div>'.repeat(3) + '</div>';
+  }
 
   try {
     const res = await fetch('/api/timeline');
     const entries = await res.json();
     if (!res.ok) throw new Error(entries.error || 'Could not load your archive.');
+    if (request !== timelineRequest) return;
 
-    timelineEl.dataset.loaded = '1';
-
-    if (!entries.length) {
-      timelineEl.innerHTML = `
-        <div class="tl-empty">
-          <div class="tl-empty-art">🗂️</div>
-          <div class="tl-empty-title">Nothing archived yet</div>
-          <div class="tl-empty-hint">Paste a link above to save your first snapshot.</div>
-        </div>`;
-      return;
-    }
-
-    // Group by calendar day, preserving the newest-first order from the API.
-    const groups = [];
-    const index = new Map();
-    for (const entry of entries) {
-      const date = new Date(entry.archivedAt);
-      const key = dayKey(date);
-      if (!index.has(key)) {
-        index.set(key, { label: friendlyDate(date), items: [] });
-        groups.push(index.get(key));
-      }
-      index.get(key).items.push(entry);
-    }
-
-    let n = 0;
-    timelineEl.innerHTML = groups.map((group) => `
-      <section class="tl-group">
-        <header class="tl-group-head">
-          <h2 class="tl-group-title">${escapeHtml(group.label)}</h2>
-          <span class="tl-group-count">${group.items.length} snapshot${group.items.length === 1 ? '' : 's'}</span>
-        </header>
-        <div class="tl-grid">${group.items.map((entry) => renderTimelineCard(entry, n++)).join('')}</div>
-      </section>
-    `).join('');
-
-    timelineEl.querySelectorAll('.tl-card').forEach((card) => {
-      const entry = entries[Number(card.dataset.index)];
-      card.addEventListener('click', () => openViewer(entry));
-      card.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openViewer(entry); }
-      });
-    });
+    timelineEntries = entries;
+    const previousDomain = domainFilter.value;
+    const domains = [...new Set(entries.map((entry) => entry.domain))].sort((a, b) => a.localeCompare(b));
+    domainFilter.replaceChildren(new Option('All sites', ''), ...domains.map((domain) => new Option(domain, domain)));
+    if (domains.includes(previousDomain)) domainFilter.value = previousDomain;
+    timelineControls.hidden = !entries.length;
+    renderTimeline();
   } catch (err) {
-    timelineEl.innerHTML = `<div class="tl-empty"><div class="tl-empty-title">${escapeHtml(err.message)}</div></div>`;
+    if (request !== timelineRequest) return;
+    timelineControls.hidden = true;
+    activityCount.textContent = 'Capture history unavailable';
+    timelineEl.innerHTML = `<div class="tl-empty"><div class="tl-empty-title">${escapeHtml(err.message)}</div><button type="button" class="btn-tonal">Try again</button></div>`;
+    timelineEl.querySelector('button').addEventListener('click', () => loadTimeline());
+  } finally {
+    if (request === timelineRequest) timelineEl.setAttribute('aria-busy', 'false');
   }
 }
 
-function renderTimelineCard(entry, i) {
-  const time = new Date(entry.archivedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const subs = entry.sublinkCount
-    ? `<div class="tl-badge">${entry.sublinkCount} sub-link${entry.sublinkCount === 1 ? '' : 's'}</div>`
-    : '';
-  // Stagger the entrance, but cap the delay so a large archive still appears promptly.
-  const delay = Math.min(i * 35, 700);
+function renderTimeline() {
+  const domain = domainFilter.value;
+  const format = formatFilter.value;
+  const entries = timelineEntries.filter((entry) => {
+    const matchesFormat = !format || (format === 'media' ? entry.media?.length : entry[format]);
+    return (!domain || entry.domain === domain) && matchesFormat;
+  });
 
-  return `
-    <div class="tl-card" data-index="${i}" tabindex="0" role="button"
-         aria-label="Open snapshot of ${escapeHtml(entry.url)}"
-         style="animation-delay:${delay}ms">
-      <div class="tl-thumb" style="${thumbStyle(entry.thumbnail)}">${entry.thumbnail ? '' : '🌐'}</div>
-      ${subs}
-      <div class="tl-veil"></div>
-      <div class="tl-info">
-        <div class="tl-domain">${escapeHtml(entry.domain)}</div>
-        <div class="tl-sub">${escapeHtml(time)}</div>
-      </div>
-    </div>`;
+  const snapshotLabel = timelineEntries.length === 1 ? 'snapshot' : 'snapshots';
+  activityCount.textContent = domain || format
+    ? `${entries.length} of ${timelineEntries.length} ${snapshotLabel}`
+    : `${timelineEntries.length} ${snapshotLabel}`;
+
+  if (!entries.length) {
+    const hasArchive = timelineEntries.length > 0;
+    timelineEl.innerHTML = `
+      <div class="tl-empty">
+        <span class="tl-empty-art">${icon('archive')}</span>
+        <div class="tl-empty-title">${hasArchive ? 'No matching snapshots' : 'No snapshots yet'}</div>
+        <div class="tl-empty-hint">${hasArchive ? 'Change the site or format filter to see more results.' : 'Archive a URL to start building your history.'}</div>
+        <button type="button" class="btn-tonal">${hasArchive ? 'Clear filters' : 'Archive a URL'}</button>
+      </div>`;
+    timelineEl.querySelector('button').addEventListener('click', () => {
+      if (hasArchive) {
+        domainFilter.value = '';
+        formatFilter.value = '';
+        renderTimeline();
+        domainFilter.focus();
+      } else {
+        input.focus();
+      }
+    });
+    return;
+  }
+
+  const groups = new Map();
+  entries.forEach((entry, index) => {
+    const date = new Date(entry.archivedAt);
+    const key = dayKey(date);
+    if (!groups.has(key)) groups.set(key, { label: friendlyDate(date), cards: [] });
+    groups.get(key).cards.push(renderTimelineCard(entry, index));
+  });
+
+  timelineEl.innerHTML = Array.from(groups.values(), ({ label, cards }) => `
+    <section class="tl-group">
+      <header class="tl-group-head">
+        <h3 class="tl-group-title">${escapeHtml(label)}</h3>
+        <span class="tl-group-count">${cards.length} snapshot${cards.length === 1 ? '' : 's'}</span>
+      </header>
+      <div class="tl-grid">${cards.join('')}</div>
+    </section>`).join('');
+
+  timelineEl.querySelectorAll('.tl-card').forEach((card) => {
+    card.addEventListener('click', () => openViewer(entries[Number(card.dataset.index)]));
+  });
 }
 
-loadTimeline();
-refreshTagsButton();
-applySettings();
+function renderTimelineCard(entry, index) {
+  const time = new Date(entry.archivedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const title = entry.title || entry.url;
+  const count = entry.sublinkCount;
+  return `
+    <button type="button" class="tl-card" data-index="${index}" title="${escapeHtml(title)}">
+      <span class="tl-thumb" aria-hidden="true" style="${thumbStyle(entry.thumbnail)}">${entry.thumbnail ? '' : icon('globe')}</span>
+      <span class="tl-info">
+        <span class="tl-title">${escapeHtml(title)}</span>
+        <span class="tl-sub">${escapeHtml(entry.domain)} · ${escapeHtml(time)}</span>
+        ${count ? `<span class="tl-badge">${count} linked page${count === 1 ? '' : 's'}</span>` : ''}
+      </span>
+    </button>`;
+}
 
 /* ============================================================
    Viewer (lightbox)
    ============================================================ */
 
+const workspace = document.querySelector('.workspace');
+const viewerPlaceholder = document.getElementById('viewer-placeholder');
+const dialogFocus = new Map();
 let viewerEntry = null;
+
+function syncModalState() {
+  const diffOpen = !diffOverlay.hidden;
+  const viewerOpen = !viewer.hidden;
+  const dialogOpen = !dialogOverlay.hidden;
+  workspace.inert = diffOpen || viewerOpen || dialogOpen;
+  dialogOverlay.inert = diffOpen || viewerOpen;
+  viewer.inert = diffOpen;
+  document.body.style.overflow = workspace.inert ? 'hidden' : '';
+}
+
+function showModal(modal, focusTarget) {
+  if (modal.hidden) dialogFocus.set(modal, document.activeElement);
+  modal.hidden = false;
+  syncModalState();
+  focusTarget.focus();
+}
+
+function hideModal(modal) {
+  modal.hidden = true;
+  syncModalState();
+  const fallback = !viewer.hidden ? viewerClose : !dialogOverlay.hidden ? dialogClose : timelineButton;
+  const previous = dialogFocus.get(modal);
+  if (previous?.isConnected && !previous.closest('[hidden], [inert], #search-results:not(.show)')) {
+    previous.focus();
+  } else {
+    fallback.focus();
+  }
+  dialogFocus.delete(modal);
+}
+
+viewerImg.addEventListener('error', () => {
+  viewerImg.hidden = true;
+  viewerPlaceholder.hidden = false;
+});
 
 function openViewer(entry) {
   viewerEntry = entry;
@@ -289,21 +344,26 @@ function openViewer(entry) {
   viewerTitle.hidden = !entry.title;
   viewerUrl.textContent = entry.url;
   viewerDate.textContent = new Date(entry.archivedAt).toLocaleString();
-  viewerImg.src = entry.thumbnail ? `/archived/${entry.thumbnail}` : '';
+  const preview = entry.thumbnail || entry.screenshot;
+  viewerImg.hidden = !preview;
+  viewerPlaceholder.hidden = Boolean(preview);
+  if (preview) viewerImg.src = archivePath(preview);
+  else viewerImg.removeAttribute('src');
   viewerImg.alt = `Snapshot of ${entry.url}`;
-  viewerHtml.href = `/archived/${entry.dir}/page.html`;
-  viewerPdf.href = `/archived/${entry.dir}/page.pdf`;
-  viewerScreenshot.href = entry.screenshot ? `/archived/${entry.screenshot}` : '#';
+  viewer.scrollTop = 0;
+  viewerHtml.href = `${archivePath(entry.dir)}/page.html`;
+  viewerPdf.href = `${archivePath(entry.dir)}/page.pdf`;
+  viewerScreenshot.href = entry.screenshot ? archivePath(entry.screenshot) : '#';
   viewerScreenshot.hidden = !entry.screenshot;
-  viewerArticle.href = entry.article ? `/archived/${entry.article}` : '#';
+  viewerArticle.href = entry.article ? archivePath(entry.article) : '#';
   viewerArticle.hidden = !entry.article;
-  viewerWarc.href = entry.warc ? `/archived/${entry.warc}` : '#';
+  viewerWarc.href = entry.warc ? archivePath(entry.warc) : '#';
   viewerWarc.hidden = !entry.warc;
 
   const media = entry.media || [];
   viewerMedia.hidden = !media.length;
   viewerMedia.innerHTML = media.map((m, i) => {
-    const href = `/archived/${m.file.split('/').map(encodeURIComponent).join('/')}`;
+    const href = archivePath(m.file);
     return `<a href="${href}" target="_blank" rel="noopener">🎬 Video${media.length > 1 ? ` ${i + 1}` : ''}</a>`;
   }).join('');
 
@@ -321,15 +381,13 @@ function openViewer(entry) {
     viewerChangeBtn.hidden = !entry.change.changed;
   }
 
-  viewer.hidden = false;
-  document.body.style.overflow = 'hidden';
-  viewerClose.focus();
+  showModal(viewer, viewerClose);
 }
 
 viewerChangeBtn.addEventListener('click', () => showDiff(viewerEntry.previousArchiveDir, viewerEntry.dir));
 
 async function showDiff(fromDir, toDir) {
-  diffOverlay.hidden = false;
+  showModal(diffOverlay, diffClose);
   diffBody.innerHTML = '<div class="dialog-loading">Loading…</div>';
 
   try {
@@ -349,7 +407,7 @@ async function showDiff(fromDir, toDir) {
 }
 
 function closeDiff() {
-  diffOverlay.hidden = true;
+  hideModal(diffOverlay);
   diffBody.innerHTML = '';
 }
 
@@ -359,14 +417,9 @@ diffOverlay.addEventListener('click', (e) => {
 });
 
 function closeViewer() {
-  viewer.classList.add('closing');
-  setTimeout(() => {
-    viewer.classList.remove('closing');
-    viewer.hidden = true;
-    viewerImg.src = '';
-    viewerEntry = null;
-    document.body.style.overflow = '';
-  }, 200);
+  hideModal(viewer);
+  viewerImg.removeAttribute('src');
+  viewerEntry = null;
 }
 
 viewerClose.addEventListener('click', closeViewer);
@@ -391,6 +444,7 @@ viewerDelete.addEventListener('click', async () => {
     showToast('Snapshot deleted');
     closeViewer();
     loadTimeline({ skeleton: false });
+    refreshTagsButton();
   } catch (err) {
     showToast(err.message || 'Delete failed', 'error');
   }
@@ -501,7 +555,7 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   form.classList.remove('archive-bar--wayback');
   const url = input.value.trim();
-  if (!url) return;
+  if (!url || btn.disabled) return;
 
   const depth = selectedDepth();
   const userAgent = userAgentInput.value.trim() || undefined;
@@ -587,34 +641,51 @@ form.addEventListener('submit', async (e) => {
    ============================================================ */
 
 let searchTimer;
-searchInput.addEventListener('input', () => {
+let searchRequest = 0;
+const searchShell = searchInput.closest('.search-shell');
+
+function closeSearch() {
   clearTimeout(searchTimer);
-  const q = searchInput.value.trim();
-  searchClear.hidden = !q;
-
-  if (!q) { searchResults.classList.remove('show'); return; }
-  searchTimer = setTimeout(() => runSearch(q), 220);
-});
-
-searchClear.addEventListener('click', () => {
-  searchInput.value = '';
-  searchClear.hidden = true;
+  searchRequest++;
   searchResults.classList.remove('show');
-  searchInput.focus();
-});
+}
 
-document.addEventListener('click', (e) => {
-  if (!searchResults.contains(e.target) && e.target !== searchInput) {
-    searchResults.classList.remove('show');
+function queueSearch() {
+  closeSearch();
+  const query = searchInput.value.trim();
+  searchClear.hidden = !query;
+  if (query) searchTimer = setTimeout(() => runSearch(query, searchRequest), 220);
+}
+
+searchInput.addEventListener('input', queueSearch);
+searchInput.addEventListener('focus', queueSearch);
+searchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' && searchResults.classList.contains('show')) {
+    event.preventDefault();
+    searchResults.querySelector('.search-open')?.focus();
   }
 });
+searchClear.addEventListener('click', () => {
+  searchInput.value = '';
+  queueSearch();
+  searchInput.focus();
+});
+document.addEventListener('click', (event) => {
+  if (!searchShell.contains(event.target)) closeSearch();
+});
 
-async function runSearch(q) {
+const onMac = /Mac|iPhone|iPad/.test(navigator.platform);
+document.getElementById('search-shortcut').textContent = onMac ? '⌘ K' : 'Ctrl K';
+
+async function runSearch(query, request) {
   try {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-    renderSearchResults(await res.json());
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) throw new Error('Search failed.');
+    const results = await res.json();
+    if (request === searchRequest) renderSearchResults(results);
   } catch {
-    searchResults.innerHTML = '<div class="search-empty">Search failed.</div>';
+    if (request !== searchRequest) return;
+    searchResults.innerHTML = '<div class="search-empty">Search failed. Try again.</div>';
     searchResults.classList.add('show');
   }
 }
@@ -626,32 +697,26 @@ function renderSearchResults(results) {
     return;
   }
 
-  searchResults.innerHTML = results.map((entry, i) => `
-    <div class="search-row" data-index="${i}">
-      <div class="search-thumb" style="${thumbStyle(entry.thumbnail)}">${entry.thumbnail ? '' : '🌐'}</div>
-      <div class="search-row-text">
-        <div class="search-row-url">${escapeHtml(entry.url)}</div>
-        <div class="search-row-meta">${escapeHtml(entry.domain)} · ${escapeHtml(new Date(entry.archivedAt).toLocaleString())}</div>
-        ${entry.snippet ? `<div class="search-row-snippet">${renderSnippet(entry.snippet)}</div>` : ''}
-      </div>
-      <div class="snapshot-links">
-        <a href="/archived/${entry.dir}/page.html" target="_blank" rel="noopener">HTML</a>
-        <a href="/archived/${entry.dir}/page.pdf" target="_blank" rel="noopener">PDF</a>
-        ${entry.screenshot ? `<a href="/archived/${entry.screenshot}" target="_blank" rel="noopener">Screenshot</a>` : ''}
-        ${entry.article ? `<a href="/archived/${entry.article}" target="_blank" rel="noopener">Article</a>` : ''}
-      </div>
-    </div>
-  `).join('');
+  searchResults.innerHTML = results.map((entry, index) => `
+    <div class="search-row">
+      <button class="search-open" type="button" data-index="${index}">
+        <span class="search-thumb" aria-hidden="true" style="${thumbStyle(entry.thumbnail)}">${entry.thumbnail ? '' : icon('globe')}</span>
+        <span class="search-row-text">
+          <span class="search-row-url">${escapeHtml(entry.title || entry.url)}</span>
+          <span class="search-row-meta">${escapeHtml(entry.domain)} · ${escapeHtml(new Date(entry.archivedAt).toLocaleString())}</span>
+          ${entry.snippet ? `<span class="search-row-snippet">${renderSnippet(entry.snippet)}</span>` : ''}
+        </span>
+      </button>
+      ${snapshotLinks(entry)}
+    </div>`).join('');
 
-  searchResults.querySelectorAll('.search-row').forEach((row) => {
-    row.addEventListener('click', (e) => {
-      if (e.target.closest('a')) return;
-      const entry = results[Number(row.dataset.index)];
-      searchResults.classList.remove('show');
-      openSiteCalendar(entry.domain);
+  searchResults.querySelectorAll('.search-open').forEach((button) => {
+    button.addEventListener('click', () => {
+      openViewer(results[Number(button.dataset.index)]);
+      dialogFocus.set(viewer, searchInput);
+      closeSearch();
     });
   });
-
   searchResults.classList.add('show');
 }
 
@@ -660,29 +725,49 @@ function renderSearchResults(results) {
    ============================================================ */
 
 function openDialog() {
-  dialogOverlay.hidden = false;
-  document.body.style.overflow = 'hidden';
+  showModal(dialogOverlay, dialogClose);
 }
 
 function closeDialog() {
-  dialogOverlay.classList.add('closing');
-  setTimeout(() => {
-    dialogOverlay.classList.remove('closing');
-    dialogOverlay.hidden = true;
-    document.body.style.overflow = '';
-  }, 200);
+  hideModal(dialogOverlay);
 }
 
 dialogClose.addEventListener('click', closeDialog);
-dialogOverlay.addEventListener('click', (e) => {
-  if (e.target === dialogOverlay) closeDialog();
+dialogOverlay.addEventListener('click', (event) => {
+  if (event.target === dialogOverlay) closeDialog();
 });
 
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  if (!diffOverlay.hidden) closeDiff();
-  else if (!viewer.hidden) closeViewer();
-  else if (!dialogOverlay.hidden) closeDialog();
+document.addEventListener('keydown', (event) => {
+  const modal = [diffOverlay, viewer, dialogOverlay].find((element) => !element.hidden);
+  if (event.key === 'Escape') {
+    if (modal === diffOverlay) closeDiff();
+    else if (modal === viewer) closeViewer();
+    else if (modal === dialogOverlay) closeDialog();
+    else if (searchResults.classList.contains('show')) {
+      searchInput.focus();
+      closeSearch();
+    }
+  }
+  if (!modal && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+  }
+  if (!modal || event.key !== 'Tab') return;
+
+  const controls = Array.from(modal.querySelectorAll('button, a[href], input, select')).filter((control) =>
+    !control.disabled && !control.closest('[hidden]') && control.getClientRects().length
+  );
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (!first) return;
+  if (event.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) {
+    event.preventDefault();
+    first.focus();
+  }
 });
 
 snapshotsBtn.addEventListener('click', () => {
@@ -736,7 +821,6 @@ async function showTagCloud() {
         ${escapeHtml(t.tag)} <span class="tag-cloud-count">${t.count}</span>
       </button>
     `).join('')}</div>`;
-    wireRipples(dialogBody);
 
     dialogBody.querySelectorAll('[data-tag]').forEach((chip) => {
       chip.addEventListener('click', () => showTagResults(chip.dataset.tag));
@@ -762,7 +846,6 @@ async function showTagResults(tag) {
     }
 
     dialogBody.innerHTML = entries.map((entry, i) => renderSnapshotRow(entry, i)).join('');
-    wireRipples(dialogBody);
 
     dialogBody.querySelectorAll('[data-view-index]').forEach((thumb) => {
       thumb.addEventListener('click', () => {
@@ -787,6 +870,7 @@ async function showSitesGrid() {
   try {
     const res = await fetch('/api/sites');
     const sites = await res.json();
+    if (!res.ok) throw new Error(sites.error || 'Could not load your library.');
 
     if (!sites.length) {
       dialogBody.innerHTML = `
@@ -818,6 +902,7 @@ async function showSitesGrid() {
           showToast(`Deleted ${domain}`);
           showSitesGrid();
           loadTimeline({ skeleton: false });
+          refreshTagsButton();
         } catch (err) {
           showToast(err.message || 'Delete failed', 'error');
         }
@@ -828,23 +913,20 @@ async function showSitesGrid() {
   }
 }
 
-function renderSiteCard(site, i) {
+function renderSiteCard(site) {
   return `
-    <div class="site-card" data-domain="${escapeHtml(site.domain)}" style="animation-delay:${Math.min(i * 45, 500)}ms">
-      <div class="site-thumb" style="${thumbStyle(site.thumbnail)}">${site.thumbnail ? '' : '🌐'}</div>
+    <div class="site-card">
+      <button type="button" class="site-open" data-domain="${escapeHtml(site.domain)}">
+        <span class="site-thumb" aria-hidden="true" style="${thumbStyle(site.thumbnail)}">${site.thumbnail ? '' : icon('globe')}</span>
+        <span class="site-info">
+          <span class="site-domain">${escapeHtml(site.domain)}</span>
+          <span class="site-meta">${site.count} snapshot${site.count === 1 ? '' : 's'} · ${escapeHtml(new Date(site.latestArchivedAt).toLocaleDateString())}</span>
+        </span>
+      </button>
       <button type="button" class="site-delete-btn"
               data-delete-site="${escapeHtml(site.domain)}" data-count="${site.count}"
-              aria-label="Delete all snapshots for ${escapeHtml(site.domain)}">🗑️</button>
-      <div class="site-info">
-        <div class="site-domain">${escapeHtml(site.domain)}</div>
-        <div class="site-meta">${site.count} snapshot${site.count === 1 ? '' : 's'} · ${escapeHtml(new Date(site.latestArchivedAt).toLocaleDateString())}</div>
-      </div>
+              aria-label="Delete all snapshots for ${escapeHtml(site.domain)}">Delete</button>
     </div>`;
-}
-
-function openSiteCalendar(domain) {
-  openDialog();
-  showCalendar(domain);
 }
 
 /* ============================================================
@@ -891,7 +973,6 @@ async function showCalendar(domain) {
       <div class="calendar-grid" id="calendar-grid"></div>
       <div class="calendar-day-panel" id="calendar-day-panel"></div>
     `;
-    wireRipples(dialogBody);
 
     const grid = document.getElementById('calendar-grid');
     const monthLabel = document.getElementById('cal-month-label');
@@ -913,7 +994,9 @@ async function showCalendar(domain) {
         const hasArchive = byDay.has(key);
         const isSelected = key === selectedKey;
         cells.push(
-          `<div class="calendar-day${hasArchive ? ' has-archive' : ''}${isSelected ? ' selected' : ''}" data-key="${key}">${day}</div>`
+          hasArchive
+            ? `<button type="button" class="calendar-day has-archive${isSelected ? ' selected' : ''}" aria-pressed="${isSelected}" data-key="${key}">${day}</button>`
+            : `<span class="calendar-day">${day}</span>`
         );
       }
 
@@ -923,6 +1006,7 @@ async function showCalendar(domain) {
         cell.addEventListener('click', () => {
           selectedKey = cell.dataset.key;
           renderMonth();
+          grid.querySelector('[aria-pressed="true"]').focus();
           renderDayPanel();
         });
       });
@@ -944,9 +1028,8 @@ async function showCalendar(domain) {
           <span>${dayEntries.length} snapshot${dayEntries.length === 1 ? '' : 's'} on ${dateLabel}</span>
           <button type="button" class="btn-tonal btn-danger" id="delete-day-btn">🗑️ Delete this day</button>
         </div>
-        ${dayEntries.map((entry, i) => renderSnapshotRow(entry, i, domain)).join('')}
+        ${dayEntries.map((entry, i) => renderSnapshotRow(entry, i)).join('')}
       `;
-      wireRipples(dayPanel);
 
       dayPanel.querySelectorAll('[data-view-index]').forEach((thumb) => {
         thumb.addEventListener('click', () => {
@@ -969,6 +1052,7 @@ async function showCalendar(domain) {
           showToast('Day deleted');
           showCalendar(domain);
           loadTimeline({ skeleton: false });
+          refreshTagsButton();
         } catch (err) {
           showToast(err.message || 'Delete failed', 'error');
         }
@@ -993,23 +1077,28 @@ async function showCalendar(domain) {
   }
 }
 
-function renderSnapshotRow(entry, i, domain) {
+function snapshotLinks(entry) {
+  const dir = archivePath(entry.dir);
+  return `<div class="snapshot-links">
+    <a href="${dir}/page.html" target="_blank" rel="noopener">HTML</a>
+    <a href="${dir}/page.pdf" target="_blank" rel="noopener">PDF</a>
+    ${entry.screenshot ? `<a href="${archivePath(entry.screenshot)}" target="_blank" rel="noopener">Screenshot</a>` : ''}
+    ${entry.article ? `<a href="${archivePath(entry.article)}" target="_blank" rel="noopener">Article</a>` : ''}
+  </div>`;
+}
+
+function renderSnapshotRow(entry, i) {
   const time = new Date(entry.archivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const subText = entry.sublinkCount ? ` · ${entry.sublinkCount} sub-link${entry.sublinkCount === 1 ? '' : 's'}` : '';
+  const subText = entry.sublinkCount ? ` · ${entry.sublinkCount} linked pages` : '';
   return `
-    <div class="snapshot-row" style="animation-delay:${Math.min(i * 45, 400)}ms">
-      <div class="snapshot-thumb" data-view-index="${i}" style="${thumbStyle(entry.thumbnail)}"
-           role="button" tabindex="0" aria-label="Open this snapshot"></div>
+    <div class="snapshot-row">
+      <button type="button" class="snapshot-thumb" data-view-index="${i}" style="${thumbStyle(entry.thumbnail)}"
+              aria-label="Open snapshot of ${escapeHtml(entry.title || entry.url)}">${entry.thumbnail ? '' : icon('globe')}</button>
       <div class="snapshot-info">
-        <div class="snapshot-url">${escapeHtml(entry.url)}</div>
+        <div class="snapshot-url">${escapeHtml(entry.title || entry.url)}</div>
         <div class="snapshot-time">${time}${subText}</div>
       </div>
-      <div class="snapshot-links">
-        <a href="/archived/${entry.dir}/page.html" target="_blank" rel="noopener">HTML</a>
-        <a href="/archived/${entry.dir}/page.pdf" target="_blank" rel="noopener">PDF</a>
-        ${entry.screenshot ? `<a href="/archived/${entry.screenshot}" target="_blank" rel="noopener">Screenshot</a>` : ''}
-        ${entry.article ? `<a href="/archived/${entry.article}" target="_blank" rel="noopener">Article</a>` : ''}
-      </div>
+      ${snapshotLinks(entry)}
     </div>`;
 }
 
@@ -1070,6 +1159,7 @@ importFile.addEventListener('change', async () => {
     showToast('Import completed');
     if (!dialogOverlay.hidden) showSitesGrid();
     loadTimeline({ skeleton: false });
+    refreshTagsButton();
   } catch (err) {
     showToast(err.message || 'Import failed', 'error');
   } finally {
@@ -1094,7 +1184,7 @@ function showWaybackImport() {
   dialogBack.onclick = null;
   dialogBody.innerHTML = `
     <form id="wayback-form" class="wayback-form">
-      <input type="text" id="wayback-url-input" placeholder="Paste a URL to look up" autocomplete="off" required>
+      <input type="text" id="wayback-url-input" inputmode="url" placeholder="Paste a URL to look up" aria-label="URL to look up" autocomplete="off" required>
       <button type="submit" class="btn-filled">Find snapshots</button>
     </form>
     <div id="wayback-results"></div>
@@ -1103,12 +1193,14 @@ function showWaybackImport() {
   const form = dialogBody.querySelector('#wayback-form');
   const urlInput = dialogBody.querySelector('#wayback-url-input');
   const results = dialogBody.querySelector('#wayback-results');
+  const submit = form.querySelector('button');
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const url = urlInput.value.trim();
-    if (!url) return;
+    if (!url || submit.disabled) return;
 
+    submit.disabled = true;
     results.innerHTML = '<div class="dialog-loading">Looking up snapshots…</div>';
     try {
       const res = await fetch(`/api/wayback/snapshots?url=${encodeURIComponent(url)}`);
@@ -1120,6 +1212,8 @@ function showWaybackImport() {
       renderWaybackSnapshots(data.url, data.snapshots, results);
     } catch (err) {
       results.innerHTML = `<div class="dialog-empty">${escapeHtml(err.message)}</div>`;
+    } finally {
+      submit.disabled = false;
     }
   });
 }
@@ -1136,7 +1230,6 @@ function renderWaybackSnapshots(url, snapshots, container) {
       <span class="wayback-row-action">Import</span>
     </button>
   `).join('')}</div>`;
-  wireRipples(container);
 
   container.querySelectorAll('.wayback-row').forEach((row) => {
     row.addEventListener('click', () => runWaybackImport(url, row.dataset.timestamp, row));
@@ -1173,7 +1266,7 @@ async function runWaybackImport(url, timestamp, rowEl) {
     });
 
     showToast('Imported from the Wayback Machine');
-    closeDialog();
+    if (rowEl.isConnected && !dialogOverlay.hidden) closeDialog();
     loadTimeline({ skeleton: false });
     refreshTagsButton();
   } catch (err) {
@@ -1195,11 +1288,8 @@ async function applySettings() {
     const res = await fetch('/api/settings');
     const settings = await res.json();
 
-    timelineEl.hidden = settings.showTimeline === false;
-
-    if (settings.enableAnimatedBackground === false) {
-      document.querySelectorAll('.bg-blob').forEach((el) => { el.hidden = true; });
-    }
+    activity.hidden = settings.showTimeline === false;
+    document.querySelector('.capture-art').classList.toggle('animate', settings.enableAnimatedBackground !== false);
 
     if (settings.enableMediaDownloads === false) {
       saveMediaInput.checked = false;
@@ -1212,3 +1302,7 @@ async function applySettings() {
     // couldn't load settings - leave everything at its default (visible/enabled) rather than guessing
   }
 }
+
+loadTimeline();
+refreshTagsButton();
+applySettings();
