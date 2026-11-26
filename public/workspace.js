@@ -23,6 +23,8 @@ let historyMatches = null;
 let historySearchRequest = 0;
 let selectingSnapshots = false;
 let batch = null;
+let collectionNames = [];
+let collectionRequest = 0;
 
 async function apiJson(url, options) {
   const res = await fetch(url, options);
@@ -51,12 +53,26 @@ function labelOptions(select, label, values) {
 function updateHistoryOptions(entries) {
   labelOptions(domainFilter, 'All sites', entries.map((entry) => entry.domain));
   labelOptions(tagFilter, 'All tags', entries.flatMap((entry) => entry.tags || []));
-  labelOptions(collectionFilter, 'All collections', entries.map((entry) => entry.collection));
+  updateCollectionOptions(entries);
   timelineControls.hidden = !entries.length;
   historyTools.hidden = !entries.length;
   const available = new Set(entries.map((entry) => entry.dir));
   for (const dir of selectedSnapshots) if (!available.has(dir)) selectedSnapshots.delete(dir);
   if (!entries.length) selectingSnapshots = false;
+}
+
+function updateCollectionOptions(entries = timelineEntries) {
+  labelOptions(collectionFilter, 'All collections', [...collectionNames, ...entries.map((entry) => entry.collection)]);
+}
+
+async function fetchCollections() {
+  const request = ++collectionRequest;
+  const collections = await apiJson('/api/collections');
+  if (request === collectionRequest) {
+    collectionNames = collections.map(({ name }) => name);
+    updateCollectionOptions();
+  }
+  return collections;
 }
 
 function activeHistoryFilters() {
@@ -201,7 +217,7 @@ const organizeActionFields = {
   move: { label: 'Collection name', placeholder: 'Leave blank to unfile' },
 };
 
-function showOrganization(entries, initialAction = 'add-tag', initialValue) {
+function showOrganization(entries, initialAction = 'add-tag') {
   if (!entries.length) return;
   const single = entries.length === 1 ? entries[0] : null;
   const tags = single?.manualTags || [];
@@ -245,7 +261,7 @@ function showOrganization(entries, initialAction = 'add-tag', initialValue) {
     valueLabel.querySelector('span').textContent = fields.label;
     value.placeholder = fields.placeholder;
     let values = action.value === 'move'
-      ? timelineEntries.map((entry) => entry.collection)
+      ? [...collectionNames, ...timelineEntries.map((entry) => entry.collection)]
       : entries.flatMap((entry) => entry.manualTags || []);
     if (action.value === 'add-tag') values = timelineEntries.flatMap((entry) => entry.manualTags || []);
     labels.replaceChildren(...[...new Set(values.filter(Boolean))].sort().map((item) => new Option(item, item)));
@@ -254,7 +270,11 @@ function showOrganization(entries, initialAction = 'add-tag', initialValue) {
   action.value = initialAction;
   action.addEventListener('change', setActionFields);
   setActionFields();
-  if (initialValue !== undefined) value.value = initialValue;
+  fetchCollections().then(() => {
+    if (form.isConnected && action.value === 'move') {
+      labels.replaceChildren(...collectionNames.map((name) => new Option(name, name)));
+    }
+  }).catch(() => {});
   dialogBody.querySelectorAll('[data-suggestion]').forEach((button) => {
     button.addEventListener('click', () => {
       action.value = 'add-tag';
@@ -271,6 +291,9 @@ function showOrganization(entries, initialAction = 'add-tag', initialValue) {
       if (action.value === 'export') {
         await downloadSelection(dirs);
         showToast('Snapshot export downloaded');
+      } else if (action.value === 'move') {
+        await assignCollection(dirs, value.value);
+        showToast('Snapshots updated');
       } else {
         await apiJson('/api/archives/organize', jsonPost({ dirs, action: action.value, value: value.value }));
         await loadTimeline({ skeleton: false });
@@ -293,44 +316,184 @@ document.getElementById('viewer-organize').addEventListener('click', () => {
   closeViewer();
   showOrganization([entry]);
 });
+document.getElementById('viewer-collection').addEventListener('click', () => {
+  const entry = viewerEntry;
+  closeViewer();
+  showOrganization([entry], 'move');
+});
 
-function showCollections() {
-  const collections = new Map();
-  for (const entry of timelineEntries) {
-    if (!entry.collection) continue;
-    if (!collections.has(entry.collection)) collections.set(entry.collection, []);
-    collections.get(entry.collection).push(entry);
-  }
-  const names = [...collections.keys()].sort((a, b) => a.localeCompare(b));
-  showWorkspaceDialog('Collections', names.length ? `<div class="workspace-list">${names.map((name, index) => `
-    <div class="workspace-list-item">
-      <button class="inline-action" type="button" data-collection-index="${index}">${icon('folder')} ${escapeHtml(name)}</button>
-      <small>${collections.get(name).length} snapshots</small>
-      <button class="btn-tonal" type="button" data-manage-collection="${index}" aria-label="Organize ${escapeHtml(name)}">Organize</button>
-    </div>`).join('')}</div>` : '<p class="dialog-empty">Choose Organize on a snapshot or review a selection to create a collection.</p>');
-  dialogBody.querySelectorAll('[data-collection-index]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const name = names[Number(button.dataset.collectionIndex)];
-      closeDialog();
-      if (activity.hidden) {
-        showOrganization(collections.get(name), 'move', name);
-        return;
-      }
-      for (const filter of historyFilters) filter.value = '';
-      collectionFilter.value = name;
-      document.getElementById('history-filters').open = true;
-      showHistorySearch('');
-    });
+function collectionPath(name) {
+  return '/api/collections?name=' + encodeURIComponent(name);
+}
+
+function bindCollectionForm(form, submit) {
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    const status = form.querySelector('[role="status"]');
+    button.disabled = true;
+    status.textContent = '';
+    try { await submit(new FormData(form)); }
+    catch (err) { status.textContent = err.message; }
+    finally { button.disabled = false; }
   });
-  dialogBody.querySelectorAll('[data-manage-collection]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const name = names[Number(button.dataset.manageCollection)];
-      showOrganization(collections.get(name), 'move', name);
+}
+
+async function showCollections() {
+  showWorkspaceDialog('Collections', `
+    ${canManageArchive ? `<form class="workspace-form collection-form">
+      <label>New collection name <input name="name" maxlength="80" required></label>
+      <button type="submit" class="btn-filled">${icon('plus')} Create collection</button>
+      <p class="dialog-note" role="status"></p>
+    </form>` : ''}
+    <div class="workspace-list collection-list" aria-busy="true">Loading collections…</div>`);
+  const list = dialogBody.querySelector('.collection-list');
+  const form = dialogBody.querySelector('form');
+  if (form) bindCollectionForm(form, async (data) => {
+    const { name } = await apiJson('/api/collections', jsonPost({ name: data.get('name') }));
+    await fetchCollections().catch(() => {});
+    if (list.isConnected && !dialogOverlay.hidden) showCollection(name);
+    showToast('Collection created');
+  });
+  try {
+    const collections = await fetchCollections();
+    if (!list.isConnected) return;
+    list.innerHTML = collections.length ? collections.map(({ name, count }) => `
+      <button class="workspace-list-item collection-entry" type="button">
+        ${icon('folder')} <span>${escapeHtml(name)}</span><small>${count} snapshot${count === 1 ? '' : 's'}</small>${icon('chevron')}
+      </button>`).join('') : '<p class="dialog-empty">No collections yet.</p>';
+    [...list.querySelectorAll('button')].forEach((button, index) => {
+      button.addEventListener('click', () => showCollection(collections[index].name));
     });
+  } catch (err) { list.textContent = err.message; }
+  finally { list.removeAttribute('aria-busy'); }
+}
+
+async function showCollection(name, picking = false) {
+  showWorkspaceDialog(name, '<div class="workspace-dialog-content" aria-busy="true">Loading snapshots…</div>');
+  dialogBack.hidden = false;
+  dialogBack.onclick = picking ? () => showCollection(name) : showCollections;
+  const panel = dialogBody.firstElementChild;
+  const isCurrent = () => panel.isConnected && !dialogOverlay.hidden;
+  try {
+    const entries = await apiJson('/api/timeline');
+    if (!isCurrent()) return;
+    if (picking) {
+      renderCollectionPicker(panel, name, entries.filter((entry) => entry.collection !== name));
+      return;
+    }
+    const members = entries.filter((entry) => entry.collection === name);
+    panel.innerHTML = `
+      <p class="dialog-note">${members.length} snapshot${members.length === 1 ? '' : 's'}</p>
+      ${canManageArchive ? `<div class="collection-actions">
+        <button type="button" class="btn-filled" data-add>${icon('plus')} Add snapshots</button>
+        <button type="button" class="btn-tonal btn-danger" data-delete>Delete collection</button>
+      </div>
+      <form class="workspace-form collection-form">
+        <label>Collection name <input name="name" maxlength="80" value="${escapeHtml(name)}" required></label>
+        <button type="submit" class="btn-tonal">Rename</button>
+        <p class="dialog-note" role="status"></p>
+      </form>` : ''}
+      <div class="collection-members">${members.length ? members.map((entry, index) => `
+        <div class="collection-member">${renderSnapshotRow(entry, index, { showDate: true })}
+          ${canManageArchive ? `<button class="btn-tonal" type="button" data-remove="${index}" aria-label="Remove ${snapshotLabel(entry)} from collection">Remove</button>` : ''}
+        </div>`).join('') : '<p class="dialog-empty">This collection is empty.</p>'}</div>`;
+    panel.querySelectorAll('[data-view-index]').forEach((button) => {
+      button.addEventListener('click', () => openViewer(members[Number(button.dataset.viewIndex)]));
+    });
+    if (!canManageArchive) return;
+    panel.querySelector('[data-add]').addEventListener('click', () => showCollection(name, true));
+    bindCollectionForm(panel.querySelector('form'), async (data) => {
+      const { name: renamed } = await apiJson(collectionPath(name), { ...jsonPost({ name: data.get('name') }), method: 'PATCH' });
+      if (collectionFilter.value === name && renamed !== name) {
+        collectionFilter.add(new Option(renamed, renamed));
+        collectionFilter.value = renamed;
+      }
+      await refreshCollectionHistory();
+      if (isCurrent()) showCollection(renamed);
+      showToast('Collection renamed');
+    });
+    const deleteButton = panel.querySelector('[data-delete]');
+    deleteButton.addEventListener('click', async () => {
+      if (!confirm(`Delete “${name}”? Its snapshots will stay in your archive.`)) return;
+      deleteButton.disabled = true;
+      try {
+        await apiJson(collectionPath(name), { method: 'DELETE' });
+        if (collectionFilter.value === name) collectionFilter.value = '';
+        await refreshCollectionHistory();
+        if (isCurrent()) showCollections();
+        showToast('Collection deleted');
+      } catch (err) { showToast(err.message, 'error'); }
+      finally { deleteButton.disabled = false; }
+    });
+    panel.querySelectorAll('[data-remove]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await assignCollection([members[Number(button.dataset.remove)].dir], '');
+          if (isCurrent()) showCollection(name);
+          showToast('Snapshot removed from collection');
+        } catch (err) { showToast(err.message, 'error'); }
+        finally { button.disabled = false; }
+      });
+    });
+  } catch (err) { if (isCurrent()) panel.textContent = err.message; }
+  finally { panel.removeAttribute('aria-busy'); }
+}
+
+async function refreshCollectionHistory() {
+  await Promise.all([fetchCollections().catch(() => {}), loadTimeline({ skeleton: false })]);
+}
+
+async function assignCollection(dirs, name) {
+  await apiJson('/api/archives/organize', jsonPost({ dirs, action: 'move', value: name }));
+  await refreshCollectionHistory();
+}
+
+function renderCollectionPicker(panel, name, entries) {
+  if (!entries.length) {
+    panel.innerHTML = '<p class="dialog-empty">No other snapshots to add.</p>';
+    return;
+  }
+  panel.innerHTML = `
+    <form class="workspace-form collection-picker">
+      <label>Find snapshots <input type="search" placeholder="Title, URL, or collection"></label>
+      <div class="workspace-list" aria-label="Available snapshots">
+        ${entries.map((entry, index) => `<label class="workspace-list-item">
+          <input type="checkbox" name="snapshot" value="${index}">
+          <span><strong>${snapshotLabel(entry)}</strong><small>${escapeHtml(entry.url)} · ${escapeHtml(new Date(entry.archivedAt).toLocaleDateString())}${entry.collection ? ' · Move from ' + escapeHtml(entry.collection) : ''}</small></span>
+        </label>`).join('')}
+      </div>
+      <p class="dialog-note" data-no-matches hidden>No matching snapshots.</p>
+      <button class="btn-filled" type="submit" disabled>${icon('plus')} Add selected snapshots</button>
+      <p class="dialog-note" role="status"></p>
+    </form>`;
+  const form = panel.querySelector('form');
+  const choices = [...form.querySelectorAll('[name="snapshot"]')];
+  form.querySelector('input[type="search"]').addEventListener('input', (event) => {
+    const term = event.target.value.trim().toLocaleLowerCase();
+    choices.forEach((choice, index) => {
+      const entry = entries[index];
+      choice.parentElement.hidden = ![entry.title, entry.url, entry.collection].some((value) => value?.toLocaleLowerCase().includes(term));
+    });
+    form.querySelector('[data-no-matches]').hidden = choices.some((choice) => !choice.parentElement.hidden);
+  });
+  const submit = form.querySelector('button[type="submit"]');
+  form.addEventListener('change', () => {
+    const count = choices.filter((choice) => choice.checked).length;
+    submit.disabled = !count;
+    submit.innerHTML = icon('plus') + (count ? `Add ${count} snapshot${count === 1 ? '' : 's'}` : 'Add selected snapshots');
+  });
+  bindCollectionForm(form, async (data) => {
+    const dirs = data.getAll('snapshot').map((index) => entries[Number(index)].dir);
+    await assignCollection(dirs, name);
+    if (panel.isConnected && !dialogOverlay.hidden) showCollection(name);
+    showToast('Snapshots added to collection');
   });
 }
 
 document.getElementById('collections-btn').addEventListener('click', showCollections);
+document.addEventListener('DOMContentLoaded', () => { fetchCollections().catch(() => {}); });
 
 const SAVED_SEARCH_KEY = 'timecapsule-saved-searches';
 
@@ -485,9 +648,12 @@ function showBatchDialog() {
   const collection = document.getElementById('batch-collection');
   existing.checked = batch?.includeExisting || false;
   collection.value = batch?.collection || '';
-  document.getElementById('batch-collections').replaceChildren(
-    ...[...new Set(timelineEntries.map((entry) => entry.collection).filter(Boolean))].sort().map((name) => new Option(name, name))
-  );
+  const labels = document.getElementById('batch-collections');
+  const batchNames = [...new Set([...collectionNames, ...timelineEntries.map((entry) => entry.collection).filter(Boolean)])];
+  labels.replaceChildren(...batchNames.sort().map((name) => new Option(name, name)));
+  fetchCollections().then(() => {
+    if (labels.isConnected) labels.replaceChildren(...collectionNames.map((name) => new Option(name, name)));
+  }).catch(() => {});
   existing.addEventListener('change', () => {
     batch.includeExisting = existing.checked;
     renderBatchResults();
@@ -653,7 +819,7 @@ function openCommandPalette() {
     { label: 'Open Library', icon: 'library', run: () => snapshotsBtn.click() },
     { label: 'Open Collections', icon: 'folder', run: showCollections },
     { label: 'Open saved searches', icon: 'bookmark', run: showSavedSearches },
-    { label: 'Archive calendar', icon: 'clock', run: () => document.getElementById('calendar-btn').click() },
+    { label: 'Archive calendar', icon: 'calendar', run: () => document.getElementById('calendar-btn').click() },
     ...(canCaptureArchive ? [
       { label: 'Bulk capture', icon: 'stack', run: showBatchDialog },
       { label: 'Capture operations', icon: 'stack', run: () => document.getElementById('operations-btn').click() },

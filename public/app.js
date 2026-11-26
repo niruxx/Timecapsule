@@ -170,9 +170,21 @@ const timelineButton = document.getElementById('timeline-btn');
 const VIEW_KEY = 'timecapsule-timeline-view';
 let timelineEntries = [];
 let timelineRequest = 0;
+let libraryView = 'grid';
 
 function icon(name) {
   return `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+}
+
+const contentAnimations = new WeakMap();
+
+function animateContent(element, offset = 7) {
+  if (!element.animate) return;
+  contentAnimations.get(element)?.cancel();
+  contentAnimations.set(element, element.animate(
+    [{ opacity: .55, translate: `0 ${offset}px` }, { opacity: 1, translate: '0 0' }],
+    { duration: 220, easing: 'cubic-bezier(.2, .7, .25, 1)' }
+  ));
 }
 
 function setTimelineView(view) {
@@ -185,7 +197,9 @@ function setTimelineView(view) {
 setTimelineView(localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid');
 for (const button of viewButtons) {
   button.addEventListener('click', () => {
+    if (timelineEl.dataset.view === button.dataset.view) return;
     setTimelineView(button.dataset.view);
+    animateContent(timelineEl);
     localStorage.setItem(VIEW_KEY, button.dataset.view);
   });
 }
@@ -309,8 +323,9 @@ function syncModalState() {
   const viewerOpen = !viewer.hidden;
   const dialogOpen = !dialogOverlay.hidden;
   workspace.inert = diffOpen || viewerOpen || dialogOpen;
-  dialogOverlay.inert = diffOpen || viewerOpen;
-  viewer.inert = diffOpen;
+  dialogOverlay.inert = !dialogOpen || diffOpen || viewerOpen;
+  viewer.inert = !viewerOpen || diffOpen;
+  diffOverlay.inert = !diffOpen;
   document.body.style.overflow = workspace.inert ? 'hidden' : '';
 }
 
@@ -342,6 +357,7 @@ viewerImg.addEventListener('error', () => {
 function openViewer(entry) {
   viewerEntry = entry;
   document.getElementById('viewer-organize').hidden = !canManageArchive || entry.dir.split('/').length !== 2;
+  document.getElementById('viewer-collection').hidden = !canManageArchive || entry.dir.split('/').length !== 2;
   viewerTitle.textContent = entry.title || '';
   viewerTitle.hidden = !entry.title;
   viewerUrl.textContent = entry.url;
@@ -861,10 +877,12 @@ async function showSitesGrid() {
   dialogBack.hidden = true;
   dialogBack.onclick = null;
   dialogBody.innerHTML = '<div class="dialog-loading">Loading…</div>';
+  const loading = dialogBody.firstElementChild;
 
   try {
     const res = await fetch('/api/sites');
     const sites = await res.json();
+    if (!loading.isConnected || dialogOverlay.hidden) return;
     if (!res.ok) throw new Error(sites.error || 'Could not load your library.');
 
     if (!sites.length) {
@@ -876,10 +894,32 @@ async function showSitesGrid() {
       return;
     }
 
-    dialogBody.innerHTML = `<div class="site-grid">${sites.map(renderSiteCard).join('')}</div>`;
+    dialogBody.innerHTML = `
+      <div class="site-view-bar">
+        <strong>${icon('globe')} ${sites.length} archived site${sites.length === 1 ? '' : 's'}</strong>
+        <div class="view-options site-view-options" role="group" aria-label="Library layout">
+          <button data-library-view="grid" type="button" aria-pressed="${libraryView === 'grid'}">${icon('grid')} Grid</button>
+          <button data-library-view="list" type="button" aria-pressed="${libraryView === 'list'}">${icon('list')} List</button>
+        </div>
+      </div>
+      <div class="site-grid" data-view="${libraryView}">${sites.map(renderSiteCard).join('')}</div>`;
+
+    const grid = dialogBody.querySelector('.site-grid');
+    const libraryViews = dialogBody.querySelectorAll('[data-library-view]');
+    for (const button of libraryViews) {
+      button.addEventListener('click', () => {
+        if (button.getAttribute('aria-pressed') === 'true') return;
+        libraryView = button.dataset.libraryView;
+        grid.dataset.view = libraryView;
+        for (const viewButton of libraryViews) {
+          viewButton.setAttribute('aria-pressed', String(viewButton === button));
+        }
+        animateContent(grid);
+      });
+    }
 
     dialogBody.querySelectorAll('[data-domain]').forEach((card) => {
-      card.addEventListener('click', () => showCalendar(card.dataset.domain));
+      card.addEventListener('click', () => showSiteSnapshots(card.dataset.domain));
     });
 
     dialogBody.querySelectorAll('[data-delete-site]').forEach((delBtn) => {
@@ -903,7 +943,9 @@ async function showSitesGrid() {
       });
     });
   } catch (err) {
-    dialogBody.innerHTML = `<div class="dialog-empty">${escapeHtml(err.message)}</div>`;
+    if (loading.isConnected && !dialogOverlay.hidden) {
+      dialogBody.innerHTML = `<div class="dialog-empty">${escapeHtml(err.message)}</div>`;
+    }
   }
 }
 
@@ -916,6 +958,7 @@ function renderSiteCard(site) {
           <span class="site-domain">${escapeHtml(site.domain)}</span>
           <span class="site-meta">${site.count} snapshot${site.count === 1 ? '' : 's'} · ${escapeHtml(new Date(site.latestArchivedAt).toLocaleDateString())}</span>
         </span>
+        <span class="site-open-icon">${icon('chevron')}</span>
       </button>
       <button type="button" class="site-delete-btn"
               data-delete-site="${escapeHtml(site.domain)}" data-count="${site.count}"
@@ -924,18 +967,20 @@ function renderSiteCard(site) {
 }
 
 /* ============================================================
-   Per-site calendar
+   Per-site snapshot views
    ============================================================ */
 
-async function showCalendar(domain) {
+async function showSiteSnapshots(domain) {
   dialogTitle.textContent = domain;
   dialogBack.hidden = false;
   dialogBack.onclick = () => showSitesGrid();
   dialogBody.innerHTML = '<div class="dialog-loading">Loading…</div>';
+  const loading = dialogBody.firstElementChild;
 
   try {
     const res = await fetch(`/api/sites/${encodeURIComponent(domain)}`);
     const entries = await res.json();
+    if (!loading.isConnected || dialogOverlay.hidden) return;
 
     if (!res.ok) {
       dialogBody.innerHTML = `<div class="dialog-empty">${escapeHtml(entries.error || 'Site not found.')}</div>`;
@@ -959,20 +1004,61 @@ async function showCalendar(domain) {
     let selectedKey = dayKey(latest);
 
     dialogBody.innerHTML = `
-      <div class="calendar-header">
-        <button class="icon-pill" id="cal-prev" type="button" aria-label="Previous month">‹</button>
-        <span id="cal-month-label"></span>
-        <button class="icon-pill" id="cal-next" type="button" aria-label="Next month">›</button>
+      <div class="site-view-bar">
+        <strong>${icon('stack')} ${entries.length} snapshot${entries.length === 1 ? '' : 's'}</strong>
+        <div class="view-options site-view-options" role="group" aria-label="Site snapshot view">
+          <button data-site-view="calendar" type="button" aria-controls="site-calendar" aria-pressed="true">${icon('calendar')} Calendar</button>
+          <button data-site-view="history" type="button" aria-controls="site-history" aria-pressed="false">${icon('list')} All snapshots</button>
+        </div>
       </div>
-      <div class="calendar-grid" id="calendar-grid"></div>
-      <div class="calendar-day-panel" id="calendar-day-panel"></div>
+      <div id="site-calendar">
+        <div class="calendar-header">
+          <button class="icon-pill calendar-prev" id="cal-prev" type="button" aria-label="Previous month">${icon('chevron')}</button>
+          <span id="cal-month-label" aria-live="polite"></span>
+          <button class="icon-pill" id="cal-next" type="button" aria-label="Next month">${icon('chevron')}</button>
+        </div>
+        <div class="calendar-grid" id="calendar-grid"></div>
+        <div class="calendar-day-panel" id="calendar-day-panel"></div>
+      </div>
+      <div id="site-history" hidden></div>
     `;
 
     const grid = document.getElementById('calendar-grid');
     const monthLabel = document.getElementById('cal-month-label');
     const dayPanel = document.getElementById('calendar-day-panel');
+    const siteCalendar = document.getElementById('site-calendar');
+    const siteHistory = document.getElementById('site-history');
+    const siteViewButtons = dialogBody.querySelectorAll('[data-site-view]');
+    let historyRendered = false;
 
-    function renderMonth() {
+    function bindSnapshotRows(container, snapshots) {
+      container.querySelectorAll('[data-view-index]').forEach((button) => {
+        button.addEventListener('click', () => openViewer({
+          ...snapshots[Number(button.dataset.viewIndex)], domain
+        }));
+      });
+    }
+
+    for (const button of siteViewButtons) {
+      button.addEventListener('click', () => {
+        if (button.getAttribute('aria-pressed') === 'true') return;
+        const showHistory = button.dataset.siteView === 'history';
+        if (showHistory && !historyRendered) {
+          const snapshots = [...entries].reverse();
+          siteHistory.innerHTML = snapshots.map((entry, i) => renderSnapshotRow(entry, i, { showDate: true })).join('');
+          bindSnapshotRows(siteHistory, snapshots);
+          historyRendered = true;
+        }
+        for (const viewButton of siteViewButtons) {
+          viewButton.setAttribute('aria-pressed', String(viewButton === button));
+        }
+        siteCalendar.hidden = showHistory;
+        siteHistory.hidden = !showHistory;
+        animateContent(showHistory ? siteHistory : siteCalendar);
+      });
+    }
+
+    function renderMonth(direction = 0) {
       monthLabel.textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
 
       const cells = WEEKDAYS.map((d) => `<div class="calendar-weekday">${d}</div>`);
@@ -985,22 +1071,25 @@ async function showCalendar(domain) {
 
       for (let day = 1; day <= daysInMonth; day++) {
         const key = `${viewYear}-${viewMonth}-${day}`;
-        const hasArchive = byDay.has(key);
+        const count = byDay.get(key)?.length || 0;
         const isSelected = key === selectedKey;
         cells.push(
-          hasArchive
-            ? `<button type="button" class="calendar-day has-archive${isSelected ? ' selected' : ''}" aria-pressed="${isSelected}" data-key="${key}">${day}</button>`
+          count
+            ? `<button type="button" class="calendar-day has-archive" aria-pressed="${isSelected}" data-key="${key}"
+                aria-label="${MONTH_NAMES[viewMonth]} ${day}, ${count} snapshot${count === 1 ? '' : 's'}">
+                <span>${day}</span><small>${count}</small></button>`
             : `<span class="calendar-day">${day}</span>`
         );
       }
 
       grid.innerHTML = cells.join('');
+      if (direction) animateContent(grid, direction * 7);
 
       grid.querySelectorAll('.calendar-day.has-archive').forEach((cell) => {
         cell.addEventListener('click', () => {
           selectedKey = cell.dataset.key;
-          renderMonth();
-          grid.querySelector('[aria-pressed="true"]').focus();
+          grid.querySelector('[aria-pressed="true"]')?.setAttribute('aria-pressed', 'false');
+          cell.setAttribute('aria-pressed', 'true');
           renderDayPanel();
         });
       });
@@ -1024,13 +1113,8 @@ async function showCalendar(domain) {
         </div>
         ${dayEntries.map((entry, i) => renderSnapshotRow(entry, i)).join('')}
       `;
-
-      dayPanel.querySelectorAll('[data-view-index]').forEach((thumb) => {
-        thumb.addEventListener('click', () => {
-          const entry = dayEntries[Number(thumb.dataset.viewIndex)];
-          openViewer({ ...entry, domain });
-        });
-      });
+      animateContent(dayPanel);
+      bindSnapshotRows(dayPanel, dayEntries);
 
       document.getElementById('delete-day-btn').addEventListener('click', async () => {
         if (!confirm(`Delete ${dayEntries.length} snapshot${dayEntries.length === 1 ? '' : 's'} from ${dateLabel}? This cannot be undone.`)) return;
@@ -1044,7 +1128,7 @@ async function showCalendar(domain) {
           const data = await res.json().catch(() => ({}));
           if (!res.ok) { showToast(data.error || 'Delete failed', 'error'); return; }
           showToast('Day deleted');
-          showCalendar(domain);
+          if (dayPanel.isConnected && !dialogOverlay.hidden) showSiteSnapshots(domain);
           loadTimeline({ skeleton: false });
         } catch (err) {
           showToast(err.message || 'Delete failed', 'error');
@@ -1052,36 +1136,41 @@ async function showCalendar(domain) {
       });
     }
 
-    document.getElementById('cal-prev').addEventListener('click', () => {
-      viewMonth -= 1;
-      if (viewMonth < 0) { viewMonth = 11; viewYear -= 1; }
-      renderMonth();
-    });
-    document.getElementById('cal-next').addEventListener('click', () => {
-      viewMonth += 1;
-      if (viewMonth > 11) { viewMonth = 0; viewYear += 1; }
-      renderMonth();
-    });
+    function moveMonth(direction) {
+      const date = new Date(viewYear, viewMonth + direction, 1);
+      viewYear = date.getFullYear();
+      viewMonth = date.getMonth();
+      selectedKey = null;
+      renderMonth(direction);
+      renderDayPanel();
+    }
+
+    document.getElementById('cal-prev').addEventListener('click', () => moveMonth(-1));
+    document.getElementById('cal-next').addEventListener('click', () => moveMonth(1));
 
     renderMonth();
     renderDayPanel();
   } catch (err) {
-    dialogBody.innerHTML = `<div class="dialog-empty">${escapeHtml(err.message)}</div>`;
+    if (loading.isConnected && !dialogOverlay.hidden) {
+      dialogBody.innerHTML = `<div class="dialog-empty">${escapeHtml(err.message)}</div>`;
+    }
   }
 }
 
 function snapshotLinks(entry) {
   const dir = archivePath(entry.dir);
   return `<div class="snapshot-links">
-    <a href="${dir}/page.html" target="_blank" rel="noopener">HTML</a>
-    <a href="${dir}/page.pdf" target="_blank" rel="noopener">PDF</a>
-    ${entry.screenshot ? `<a href="${archivePath(entry.screenshot)}" target="_blank" rel="noopener">Screenshot</a>` : ''}
-    ${entry.article ? `<a href="${archivePath(entry.article)}" target="_blank" rel="noopener">Article</a>` : ''}
+    <a href="${dir}/page.html" target="_blank" rel="noopener">${icon('code')} HTML</a>
+    <a href="${dir}/page.pdf" target="_blank" rel="noopener">${icon('file')} PDF</a>
+    ${entry.screenshot ? `<a href="${archivePath(entry.screenshot)}" target="_blank" rel="noopener">${icon('image')} Screenshot</a>` : ''}
+    ${entry.article ? `<a href="${archivePath(entry.article)}" target="_blank" rel="noopener">${icon('book')} Article</a>` : ''}
   </div>`;
 }
 
-function renderSnapshotRow(entry, i) {
-  const time = new Date(entry.archivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function renderSnapshotRow(entry, i, { showDate = false } = {}) {
+  const date = new Date(entry.archivedAt);
+  const time = showDate ? date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+    : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const subText = entry.sublinkCount ? ` · ${entry.sublinkCount} linked pages` : '';
   return `
     <div class="snapshot-row">

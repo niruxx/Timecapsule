@@ -7,8 +7,13 @@ const replayReader = document.getElementById('replay-reader');
 const compareVersions = document.getElementById('compare-versions');
 const snapshotAssets = document.getElementById('snapshot-assets');
 const replayLabels = { screenshot: 'Screenshot', html: 'HTML', pdf: 'PDF', reader: 'Reader', warc: 'WARC replay', thumbnail: 'Thumbnail' };
+const replayIcons = { screenshot: 'image', html: 'code', pdf: 'file', reader: 'book', warc: 'history', thumbnail: 'image' };
 let replayGeneration = 0;
 let compareGeneration = 0;
+
+replayFrame.addEventListener('load', () => {
+  if (!replayFrame.hidden) animateContent(replayFrame);
+});
 
 function clearReplay() {
   replayGeneration++;
@@ -39,7 +44,7 @@ async function loadReplay(entry) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'btn-tonal';
-      button.textContent = replayLabels[key];
+      button.innerHTML = icon(replayIcons[key]) + replayLabels[key];
       button.dataset.replay = key;
       button.setAttribute('aria-pressed', 'false');
       button.addEventListener('click', () => showReplayFormat(entry, key, formats[key], notice));
@@ -66,6 +71,7 @@ async function showReplayFormat(entry, key, filename, notice) {
     if (key === 'screenshot' || key === 'thumbnail') {
       viewerImg.src = source;
       viewerImg.hidden = false;
+      animateContent(viewerImg);
     } else if (key === 'html' || key === 'pdf') {
       if (key === 'pdf') replayFrame.removeAttribute('sandbox');
       else replayFrame.setAttribute('sandbox', '');
@@ -79,6 +85,7 @@ async function showReplayFormat(entry, key, filename, notice) {
       if (key === 'reader') {
         replayReader.textContent = content;
         replayReader.hidden = false;
+        animateContent(replayReader);
       } else {
         replayFrame.setAttribute('sandbox', '');
         replayFrame.srcdoc = warcDocument(content);
@@ -183,7 +190,7 @@ function showVersionComparison(versions) {
   render();
 }
 
-document.getElementById('calendar-btn').addEventListener('click', async () => {
+async function showArchiveCalendar() {
   showWorkspaceDialog('Archive calendar', '<div id="archive-calendar" class="archive-calendar">Loading…</div>');
   const panel = document.getElementById('archive-calendar');
   try {
@@ -209,10 +216,12 @@ document.getElementById('calendar-btn').addEventListener('click', async () => {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'workspace-list-item';
-        button.textContent = (entry.title || entry.url) + (entry.change?.changed ? ' · Changed' : '');
+        button.innerHTML = icon('archive');
+        button.append((entry.title || entry.url) + (entry.change?.changed ? ' · Changed' : ''));
         button.addEventListener('click', () => openViewer(entry));
         return button;
       }));
+      animateContent(list);
     }
     function showMonth() {
       if (!month.value) return;
@@ -230,6 +239,7 @@ document.getElementById('calendar-btn').addEventListener('click', async () => {
           <span>${day}</span><small>${captures.length}${changed ? ' · changed' : ''}</small></button>`);
       }
       grid.innerHTML = days.join('');
+      animateContent(grid);
       list.textContent = 'Choose a capture date.';
       for (const button of grid.querySelectorAll('[data-day]')) button.addEventListener('click', () => {
         grid.querySelector('[aria-pressed="true"]')?.setAttribute('aria-pressed', 'false');
@@ -241,4 +251,7 @@ document.getElementById('calendar-btn').addEventListener('click', async () => {
     showMonth();
     grid.querySelector('[data-day="' + first.getDate() + '"]')?.click();
   } catch (err) { panel.textContent = err.message; }
-});
+}
+
+document.getElementById('calendar-btn').addEventListener('click', showArchiveCalendar);
+document.getElementById('history-calendar').addEventListener('click', showArchiveCalendar);

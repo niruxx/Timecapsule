@@ -8,7 +8,7 @@ const { archiveUrl, importWaybackSnapshot } = require('./lib/archiver');
 const {
   listSites, listTimeline, listSiteHistory, searchArchives, deleteSite, deleteMainDirs,
   listAllArchives, listTags, listByTag, findRecentArchive,
-  resolveSelectedArchives, organizeArchives,
+  resolveSelectedArchives, organizeArchives, listCollections, changeCollection,
 } = require('./lib/history');
 const { log, logTraffic } = require('./lib/logger');
 const { parseCookies } = require('./lib/cookies');
@@ -655,6 +655,24 @@ function operation(handler) {
     catch (err) { res.status(err.status || 500).json({ error: err.message }); }
   };
 }
+
+app.get('/api/collections', operation(async (req) =>
+  listCollections(ARCHIVE_DIR, await access.allowedRoots(req))));
+app.post('/api/collections', adminOnly, operation(async (req) => {
+  const { name } = await changeCollection(ARCHIVE_DIR, null, req.body?.name ?? undefined);
+  return { name };
+}));
+
+async function updateCollection(current, value) {
+  const { name, dirs } = await changeCollection(ARCHIVE_DIR, current, value);
+  for (const dir of dirs) storage.replicate(dir).catch((err) => log('S3 replication failed: ' + err.message));
+  return { name, count: dirs.length };
+}
+
+app.patch('/api/collections', adminOnly, operation((req) =>
+  updateCollection(req.query.name, req.body?.name ?? undefined)));
+app.delete('/api/collections', adminOnly, operation((req) =>
+  updateCollection(req.query.name, null)));
 
 app.get('/api/operations/jobs', captureOnly, operation((req) => listJobs(
   req.account.username, req.account.role === 'admin',
