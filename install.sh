@@ -16,7 +16,7 @@
 set -Eeuo pipefail
 
 SERVICE_NAME="timecapsule"
-NODE_MIN_MAJOR=18
+NODE_MIN_VERSION=22.12.0
 NODE_INSTALL_MAJOR="${NODE_MAJOR:-22}" # only used if Node has to be installed; override: NODE_MAJOR=24 bash install.sh
 
 ASSUME_YES=0
@@ -301,20 +301,20 @@ install_system_packages() {
 # Node.js
 # ---------------------------------------------------------------------------------------------
 
-node_major() { node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
-
 node_is_usable() {
-  command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 && (( $(node_major) >= NODE_MIN_MAJOR ))
+  command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 &&
+    node -e 'const [major, minor] = process.versions.node.split(".").map(Number);
+      process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1);'
 }
 
 install_node() {
-  info "Node.js $NODE_MIN_MAJOR or newer is required, and it isn't installed (or is too old)."
+  info "Node.js $NODE_MIN_VERSION or newer is required, and it isn't installed (or is too old)."
   detect_pkg_manager
   case "$PM" in
     apt)
       info "Will install Node.js $NODE_INSTALL_MAJOR from NodeSource (https://github.com/nodesource/distributions)."
       ask_yes_no "Go ahead?" y || die "Node.js is required. Install it (https://nodejs.org/) and re-run."
-      need_sudo || die "sudo isn't available. Install Node.js $NODE_MIN_MAJOR+ yourself and re-run."
+      need_sudo || die "sudo isn't available. Install Node.js $NODE_MIN_VERSION+ yourself and re-run."
       if (( DRY_RUN )); then
         info "[dry-run] curl -fsSL https://deb.nodesource.com/setup_${NODE_INSTALL_MAJOR}.x | sudo -E bash -"
       else
@@ -325,7 +325,7 @@ install_node() {
     dnf|yum)
       info "Will install Node.js $NODE_INSTALL_MAJOR from NodeSource (https://github.com/nodesource/distributions)."
       ask_yes_no "Go ahead?" y || die "Node.js is required. Install it (https://nodejs.org/) and re-run."
-      need_sudo || die "sudo isn't available. Install Node.js $NODE_MIN_MAJOR+ yourself and re-run."
+      need_sudo || die "sudo isn't available. Install Node.js $NODE_MIN_VERSION+ yourself and re-run."
       if (( DRY_RUN )); then
         info "[dry-run] curl -fsSL https://rpm.nodesource.com/setup_${NODE_INSTALL_MAJOR}.x | sudo bash -"
       else
@@ -336,11 +336,11 @@ install_node() {
     pacman)
       info "Will install Node.js and npm with pacman."
       ask_yes_no "Go ahead?" y || die "Node.js is required. Install it and re-run."
-      need_sudo || die "sudo isn't available. Install Node.js $NODE_MIN_MAJOR+ yourself and re-run."
+      need_sudo || die "sudo isn't available. Install Node.js $NODE_MIN_VERSION+ yourself and re-run."
       run sudo pacman -S --needed --noconfirm nodejs npm
       ;;
     *)
-      die "Can't install Node.js automatically on this system. Install Node.js $NODE_MIN_MAJOR+ from https://nodejs.org/ and re-run."
+      die "Can't install Node.js automatically on this system. Install Node.js $NODE_MIN_VERSION+ from https://nodejs.org/ and re-run."
       ;;
   esac
 }
@@ -351,12 +351,12 @@ ensure_node() {
     ok "Node.js $(node -v) / npm $(npm -v)"
   else
     if (( SKIP_DEPS )); then
-      die "Node.js $NODE_MIN_MAJOR+ with npm is required (--skip-deps was given, so it wasn't installed)."
+      die "Node.js $NODE_MIN_VERSION+ with npm is required (--skip-deps was given, so it wasn't installed)."
     fi
     install_node
     if (( DRY_RUN )); then NODE_BIN="/usr/bin/node"; return 0; fi
     hash -r
-    node_is_usable || die "Node.js $NODE_MIN_MAJOR+ (with npm) still isn't available after installing. Check the output above."
+    node_is_usable || die "Node.js $NODE_MIN_VERSION+ (with npm) still isn't available after installing. Check the output above."
     ok "Node.js $(node -v) / npm $(npm -v)"
   fi
 
@@ -501,7 +501,13 @@ verify_browser() {
   if (( DRY_RUN )); then info "[dry-run] would launch headless Chromium once to verify its system libraries"; return 0; fi
 
   local chrome_path output probe_status=0
-  local probe="process.stdout.write(require('puppeteer').executablePath())"
+  local probe="
+    Promise.resolve().then(() => require('puppeteer').executablePath())
+      .then(path => process.stdout.write(path), err => {
+        console.error(err.message || err);
+        process.exitCode = 1;
+      });
+  "
   chrome_path="$(node -e "$probe" 2>&1)" || probe_status=$?
   if (( probe_status && ! BROWSER_DOWNLOAD_FAILED )) && [[ "$chrome_path" == *"Could not find Chrome (ver."* ]]; then
     warn "Puppeteer couldn't find its Chromium build. Trying the download now."
@@ -518,7 +524,7 @@ verify_browser() {
 
   if output="$(node -e "
     const puppeteer = require('puppeteer');
-    puppeteer.launch({ headless: 'new' })
+    puppeteer.launch({ headless: true })
       .then((browser) => browser.close())
       .then(() => process.exit(0), (err) => { console.error(err.message || err); process.exit(1); });
   " 2>&1)"; then

@@ -1,6 +1,6 @@
 # TimeCapsule
 
-![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white)
+![Node](https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-informational)
 
 **A self-hosted, open-source alternative to Archive.org and ArchiveBox.** Paste a URL into the address bar and TimeCapsule renders it in headless Chrome, then saves a real, self-contained HTML snapshot, a PDF, and a thumbnail — all on your own disk, under your own control.
@@ -133,7 +133,7 @@ See [roadmap.md](roadmap.md) for the phased plan covering organization, replay, 
 
 ## Installing
 
-**Prerequisites:** [Node.js](https://nodejs.org/) 18 or newer. On Linux you'll also need a handful of Chromium system libraries — see [Requirements](#requirements).
+**Prerequisites:** [Node.js](https://nodejs.org/) 22.12 or newer. On Linux you'll also need a handful of Chromium system libraries — see [Requirements](#requirements).
 
 ```
 git clone <this-repository-url>
@@ -160,7 +160,7 @@ bash install.sh
 
 `install.sh` walks through, and skips anything already done:
 
-1. Installs `git`, `curl` and the system libraries headless Chromium needs (apt, dnf/yum or pacman; the renamed `t64` packages on Ubuntu 24.04 are handled), and Node.js 18+ from NodeSource if you don't have it.
+1. Installs `git`, `curl` and the system libraries headless Chromium needs (apt, dnf/yum or pacman; the renamed `t64` packages on Ubuntu 24.04 are handled), and Node.js 22.12+ from NodeSource if you don't have it.
 2. Runs `npm ci`. If a native dependency needs missing build tools, the installer offers to install Python 3, `make`, and a C++ compiler, then retries. It also checks that Chromium can start and reports missing libraries or sandbox errors.
 3. Asks for a port and offers to create a **systemd service** — a system-wide one that starts at boot (recommended), or a user service that needs no root (with optional "linger" so it starts at boot too). It's enabled and started, then checked over HTTP.
 
@@ -602,7 +602,7 @@ Anything listed as living in `config.js` can be overridden without touching that
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) 18 or newer.
+- [Node.js](https://nodejs.org/) 22.12 or newer.
 - No Python and nothing else to install for the media extractor: the first time TimeCapsule finds video/audio to download, it fetches a standalone [yt-dlp](https://github.com/yt-dlp/yt-dlp) binary for your OS into `bin/` (like Puppeteer does for Chromium) and reuses it after that. Needs outbound internet access the first time; every archive before that point works normally, just without media downloads.
 - Full-text search uses [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3), a native module that ships prebuilt binaries for common platforms via `npm install` - no compiler needed on those. If it can't load on yours (an unusual OS/arch with no prebuilt binary available), TimeCapsule logs a warning and keeps running with URL/domain-only search rather than failing to start.
 - On Linux, Chromium (used via Puppeteer) needs a few system libraries. If `npm start` fails to launch the browser, install them, e.g. on Debian/Ubuntu:

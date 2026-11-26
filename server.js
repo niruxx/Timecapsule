@@ -72,7 +72,7 @@ let browserPromise;
 let shuttingDown = false;
 function getBrowser() {
   if (!browserPromise) {
-    const attempt = puppeteer.launch({ headless: 'new' });
+    const attempt = puppeteer.launch({ headless: true });
     browserPromise = attempt;
     const reset = () => { if (browserPromise === attempt) browserPromise = null; };
     attempt.then((browser) => browser.once('disconnected', reset), reset);
