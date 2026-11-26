@@ -376,11 +376,11 @@ ensure_node() {
 # folder ... exists but the executable ... is missing". That fails every later `npm ci` too, so
 # clear out any such husk first. It's only a cache of a re-downloadable file, never user data.
 clean_stale_browser_cache() {
-  local cache="${PUPPETEER_CACHE_DIR:-$HOME/.cache/puppeteer}" dir
+  local cache="${PUPPETEER_CACHE_DIR:-$HOME/.cache/puppeteer}" dir browser_file
   [[ -d "$cache" ]] || return 0
   for dir in "$cache"/chrome/* "$cache"/chrome-headless-shell/*; do
     [[ -d "$dir" && "$dir" == "$cache"/* ]] || continue
-    if [[ -z "$(find "$dir" -maxdepth 2 -type f -perm /111 \( -name chrome -o -name chrome-headless-shell \) -print -quit 2>/dev/null)" ]]; then
+    if browser_file="$(find "$dir" -maxdepth 2 -type f \( -name chrome -o -name chrome-headless-shell \) -print -quit)" && [[ -z "$browser_file" ]]; then
       warn "Removing an incomplete Chromium download left by an earlier attempt: $dir"
       run rm -rf "$dir"
     fi
@@ -410,7 +410,6 @@ download_browser() {
     warn "this installer - every step that's already done is skipped."
     return 1
   fi
-  ok "Chromium downloaded"
 }
 
 # True if the last logged npm run failed inside Puppeteer's browser download rather than in
@@ -501,19 +500,19 @@ verify_browser() {
   step "Checking that headless Chromium can start"
   if (( DRY_RUN )); then info "[dry-run] would launch headless Chromium once to verify its system libraries"; return 0; fi
 
-  local chrome_path output
-  chrome_path="$(node -e "process.stdout.write(require('puppeteer').executablePath())" 2>/dev/null || true)"
-  if [[ -z "$chrome_path" || ! -x "$chrome_path" ]]; then
-    if (( ! BROWSER_DOWNLOAD_FAILED )); then
-      warn "Puppeteer's Chromium isn't there (an install-script guard, or a blocked download?) - fetching it now."
-      download_browser || true
-      chrome_path="$(node -e "process.stdout.write(require('puppeteer').executablePath())" 2>/dev/null || true)"
-    fi
+  local chrome_path output probe_status=0
+  local probe="process.stdout.write(require('puppeteer').executablePath())"
+  chrome_path="$(node -e "$probe" 2>&1)" || probe_status=$?
+  if (( probe_status && ! BROWSER_DOWNLOAD_FAILED )) && [[ "$chrome_path" == *"Could not find Chrome (ver."* ]]; then
+    warn "Puppeteer couldn't find its Chromium build. Trying the download now."
+    download_browser || true
+    probe_status=0
+    chrome_path="$(node -e "$probe" 2>&1)" || probe_status=$?
   fi
-  if [[ -z "$chrome_path" || ! -x "$chrome_path" ]]; then
+  if (( probe_status )); then
     BROWSER_OK=0
-    warn "Chromium isn't installed, so there's nothing to test. TimeCapsule can't archive anything until it is."
-    warn "Fix the download problem reported above and re-run this installer."
+    warn "Puppeteer couldn't resolve Chromium:"
+    printf '%s\n' "$chrome_path" | sed -n '1,8s/^/          /p' >&2
     return 0
   fi
 
@@ -531,6 +530,11 @@ verify_browser() {
   BROWSER_OK=0
   warn "Chromium failed to start:"
   printf '%s\n' "$output" | sed -n '1,8s/^/          /p' >&2
+
+  if [[ -f "$chrome_path" && ! -x "$chrome_path" ]]; then
+    warn "Chromium exists but isn't executable: $chrome_path"
+    warn "Check its execute permissions and whether its filesystem is mounted with noexec."
+  fi
 
   if [[ -n "$chrome_path" && -x "$chrome_path" ]] && command -v ldd >/dev/null 2>&1; then
     local missing_libs
